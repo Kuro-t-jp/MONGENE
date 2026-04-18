@@ -1,0 +1,38 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "MONGENE",
+  "version": "0.1.0",
+  "identifier": "com.tk.mongene",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "MONGENE - 問題生成",
+        "width": 1280,
+        "height": 820,
+        "minWidth": 1000,
+        "minHeight": 640,
+        "dragDropEnabled": false
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self' tauri: asset: https://*.googleapis.com; connect-src https://generativelanguage.googleapis.com https://oauth2.googleapis.com https://forms.googleapis.com http://127.0.0.1:14201; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' blob:; worker-src blob: 'self'"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ]
+  }
+}
