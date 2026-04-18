@@ -1,5 +1,7 @@
-import { useRef, useState, useCallback } from 'react'
+import { useRef, useState, useCallback, useEffect } from 'react'
 import { v4 as uuidv4 } from 'uuid'
+import { invoke } from '@tauri-apps/api/core'
+import { listen } from '@tauri-apps/api/event'
 import { useAppStore } from '../store/appStore'
 import { parseFile, detectFileType } from '../lib/parsers'
 import { extractTextFromImage } from '../lib/gemini'
@@ -29,6 +31,9 @@ export default function DataSourceView() {
   const toggleDataSource = useAppStore((s) => s.toggleDataSource)
   const settings         = useAppStore((s) => s.settings)
   const setActiveView    = useAppStore((s) => s.setActiveView)
+  const urlHistory       = useAppStore((s) => s.urlHistory)
+  const addUrlHistory    = useAppStore((s) => s.addUrlHistory)
+  const clearUrlHistory  = useAppStore((s) => s.clearUrlHistory)
 
   const [isDragging,  setIsDragging]  = useState(false)
   const [, setDragCounter] = useState(0) // 子要素経由のleaveを無視するカウンター
@@ -40,6 +45,51 @@ export default function DataSourceView() {
   const [pasteText,  setPasteText]  = useState('')
   const [pasteName,  setPasteName]  = useState('')
 
+  const [showUrl,    setShowUrl]    = useState(false)
+  const [urlInput,   setUrlInput]   = useState('')
+  const [urlLoading, setUrlLoading] = useState(false)
+  const [urlMsg,     setUrlMsg]     = useState<string | null>(null)
+
+  // アプリ内ブラウザから「取り込む」ボタンが押されたとき content-captured イベントを受信
+  useEffect(() => {
+    let cancelled = false
+    let unlisten: (() => void) | undefined
+    listen<{ title: string; content: string }>('content-captured', ({ payload }) => {
+      addDataSource({
+        id: uuidv4(),
+        type: 'paste',
+        name: payload.title || 'Webページ取り込み',
+        content: payload.content,
+        size: new Blob([payload.content]).size,
+        addedAt: new Date().toISOString(),
+        selected: true,
+      })
+      setUrlMsg(`✅ 取り込み完了: ${payload.title}`)
+      setUrlLoading(false)
+    }).then((fn) => {
+      if (cancelled) { fn() } else { unlisten = fn }
+    })
+    return () => {
+      cancelled = true
+      unlisten?.()
+    }
+  }, []) // addDataSource は Zustand の安定した参照なので依存不要
+
+  const handleOpenUrl = async (url?: string) => {
+    const trimmed = (url ?? urlInput).trim()
+    if (!trimmed) return
+    if (url) setUrlInput(url)
+    setUrlLoading(true)
+    setUrlMsg('🌐 アプリ内ブラウザを起動中...')
+    try {
+      await invoke('open_notebooklm_window', { url: trimmed })
+      addUrlHistory(trimmed)
+      setUrlMsg('📌 ページが開きました。右下の「MONGENEに取り込む」ボタンを押してください。\n（初回はGoogleアカウントでのログインが必要です）')
+    } catch (err) {
+      setUrlMsg(`❌ ${String(err)}`)
+      setUrlLoading(false)
+    }
+  }
   const fileInputRef = useRef<HTMLInputElement>(null)
   const handleFiles = useCallback(
     async (files: FileList | File[]) => {
@@ -238,7 +288,7 @@ export default function DataSourceView() {
         )}
 
         {/* Paste button */}
-        <div style={{ marginTop: 12 }}>
+        <div style={{ marginTop: 12, display: 'flex', gap: 8 }}>
           <button
             onClick={() => setShowPaste(!showPaste)}
             style={{
@@ -252,7 +302,113 @@ export default function DataSourceView() {
           >
             📋 テキストを貼り付け
           </button>
+
+          <button
+            onClick={() => { setShowUrl(!showUrl); setUrlMsg(null) }}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 8,
+              padding: '8px 16px', borderRadius: 10,
+              border: `1px solid ${showUrl ? 'var(--color-primary)' : 'var(--color-border)'}`,
+              background: showUrl ? 'rgba(99,102,241,0.10)' : 'var(--color-surface-3)',
+              color: showUrl ? 'var(--color-primary-hover)' : 'var(--color-text-muted)',
+              fontSize: 13, cursor: 'pointer', transition: 'all 0.15s',
+            }}
+          >
+            🌐 URLから取り込む
+          </button>
         </div>
+
+        {/* URL panel */}
+        {showUrl && (
+          <div
+            style={{
+              marginTop: 12, padding: 20, borderRadius: 14,
+              background: 'var(--color-surface-2)', border: '1px solid var(--color-border)',
+            }}
+          >
+            <p style={{ margin: '0 0 4px', fontSize: 13, fontWeight: 700, color: 'var(--color-text)' }}>
+              🌐 URLからページを取り込む
+            </p>
+            <p style={{ margin: '0 0 12px', fontSize: 12, color: 'var(--color-text-dim)', lineHeight: 1.5 }}>
+              NotebookLM・Webサイトなどをアプリ内ブラウザで開き、右下の「MONGENEに取り込む」ボタンでテキストを取得します。<br />
+              <span style={{ color: 'rgba(99,102,241,0.9)' }}>※ NotebookLM は初回のみ Google ログインが必要です。</span>
+            </p>
+            <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+              <input
+                type="url"
+                placeholder="https://notebooklm.google.com/notebook/..."
+                value={urlInput}
+                onChange={(e) => setUrlInput(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleOpenUrl()}
+                style={{
+                  flex: 1, padding: '9px 12px',
+                  borderRadius: 8, border: '1px solid var(--color-border)',
+                  background: 'var(--color-surface-3)', color: 'var(--color-text)',
+                  fontSize: 13, outline: 'none', boxSizing: 'border-box',
+                }}
+              />
+              <button
+                onClick={() => handleOpenUrl()}
+                disabled={!urlInput.trim() || urlLoading}
+                style={{
+                  padding: '9px 18px', borderRadius: 8, border: 'none',
+                  background: 'var(--color-primary)', color: '#fff',
+                  fontSize: 13, fontWeight: 600, cursor: 'pointer',
+                  opacity: !urlInput.trim() || urlLoading ? 0.4 : 1,
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                {urlLoading ? '⏳ 起動中...' : '🚀 開く'}
+              </button>
+            </div>
+            {urlMsg && (
+              <p
+                style={{
+                  margin: 0, fontSize: 12, padding: '10px 12px', borderRadius: 8,
+                  background: urlMsg.startsWith('❌') ? 'rgba(239,68,68,0.08)' : 'rgba(99,102,241,0.08)',
+                  color: urlMsg.startsWith('❌') ? '#f87171' : 'var(--color-text-muted)',
+                  border: `1px solid ${urlMsg.startsWith('❌') ? 'rgba(239,68,68,0.3)' : 'rgba(99,102,241,0.25)'}`,
+                  lineHeight: 1.6, whiteSpace: 'pre-wrap',
+                }}
+              >
+                {urlMsg}
+              </p>
+            )}
+            {urlHistory.length > 0 && (
+              <div style={{ marginTop: 14 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                  <p style={{ margin: 0, fontSize: 11, fontWeight: 700, color: 'var(--color-text-dim)' }}>🕓 最近使ったURL</p>
+                  <button
+                    onClick={clearUrlHistory}
+                    style={{
+                      padding: '2px 8px', fontSize: 10, borderRadius: 6, cursor: 'pointer',
+                      border: '1px solid var(--color-border)', background: 'transparent',
+                      color: 'var(--color-text-dim)',
+                    }}
+                  >クリア</button>
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  {urlHistory.map((u) => (
+                    <button
+                      key={u}
+                      onClick={() => handleOpenUrl(u)}
+                      title={u}
+                      style={{
+                        textAlign: 'left', padding: '6px 10px', borderRadius: 8, cursor: 'pointer',
+                        border: '1px solid var(--color-border)', background: 'var(--color-surface-3)',
+                        color: 'var(--color-text-muted)', fontSize: 11,
+                        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                        maxWidth: '100%',
+                      }}
+                    >
+                      {u}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Paste panel */}
         {showPaste && (

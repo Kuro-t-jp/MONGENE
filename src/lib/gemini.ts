@@ -20,6 +20,43 @@ function extractJSON(text: string): unknown {
   throw new Error(`AIからの応答をJSONとして解析できませんでした。\n\n[受信内容の先頭]: ${preview}`)
 }
 
+// ─── 途中切れJSON から完成オブジェクトを回収 ──────────────────────────────
+function extractCompleteObjects(text: string, arrayKey: string): unknown[] {
+  const keyIdx = text.indexOf(`"${arrayKey}"`)
+  if (keyIdx === -1) return []
+  const arrStart = text.indexOf('[', keyIdx)
+  if (arrStart === -1) return []
+
+  const objects: unknown[] = []
+  let i = arrStart + 1
+  while (i < text.length) {
+    while (i < text.length && /[\s,]/.test(text[i])) i++
+    if (i >= text.length || text[i] === ']') break
+    if (text[i] !== '{') break
+    let depth = 0, j = i, inStr = false, escaped = false
+    while (j < text.length) {
+      const c = text[j]
+      if (escaped) { escaped = false }
+      else if (c === '\\' && inStr) { escaped = true }
+      else if (c === '"') { inStr = !inStr }
+      else if (!inStr) {
+        if (c === '{') depth++
+        else if (c === '}') {
+          depth--
+          if (depth === 0) {
+            try { objects.push(JSON.parse(text.slice(i, j + 1))) } catch { /* malformed */ }
+            i = j + 1
+            break
+          }
+        }
+      }
+      j++
+    }
+    if (j >= text.length && depth > 0) break // 途中で切れた
+  }
+  return objects
+}
+
 // ─── Uint8Array → base64 (スタックオーバーフロー対策) ─────────────────────
 function uint8ToBase64(arr: Uint8Array): string {
   let binary = ''
@@ -63,8 +100,6 @@ export async function generateQuestions(
   onProgress?: (msg: string) => void
 ): Promise<Question[]> {
   if (!apiKey) throw new Error('Gemini APIキーが設定されていません')
-  if (sources.length === 0) throw new Error('データソースが選択されていません')
-
   onProgress?.('Gemini APIに接続中...')
 
   const genAI = new GoogleGenerativeAI(apiKey)
@@ -73,7 +108,7 @@ export async function generateQuestions(
     generationConfig: {
       responseMimeType: 'application/json',
       temperature: 0.8,
-      maxOutputTokens: 32768,
+      maxOutputTokens: 65536,
     },
   })
 
@@ -84,24 +119,31 @@ export async function generateQuestions(
 
   const result = await model.generateContent(prompt)
   const text = result.response.text()
+  const finishReason = result.response.candidates?.[0]?.finishReason
 
   onProgress?.('レスポンスを解析中...')
 
-  let parsed: { questions: unknown[] }
-  try {
-    parsed = extractJSON(text) as { questions: unknown[] }
-  } catch (err) {
-    throw err
-  }
-
-  if (!Array.isArray(parsed.questions)) {
-    throw new Error('無効なレスポンス形式です')
+  let questions: unknown[]
+  if (finishReason === 'MAX_TOKENS') {
+    // 出力が打ち切られた場合、完成したquestionだけ部分回収
+    questions = extractCompleteObjects(text, 'questions')
+    if (questions.length === 0) throw new Error('AIの出力がトークン上限で打ち切られ、問題を取得できませんでした。問題数を減らして再試行してください。')
+    onProgress?.(`⚠️ 出力が打ち切られました。回収できた問題: ${questions.length}件`)
+  } else {
+    let parsed: { questions: unknown[] }
+    try {
+      parsed = extractJSON(text) as { questions: unknown[] }
+    } catch (err) {
+      throw err
+    }
+    if (!Array.isArray(parsed.questions)) throw new Error('無効なレスポンス形式です')
+    questions = parsed.questions
   }
 
   const defaultLevel = config.levels[0] ?? 'high_exam'
   const now = new Date().toISOString()
 
-  return parsed.questions.map((q: any) => ({
+  return questions.map((q: any) => ({
     id: uuidv4(),
     type: (q.type as QuestionType) ?? 'multiple_choice_4',
     level: (q.level as ExamLevel) ?? defaultLevel,
@@ -125,8 +167,6 @@ export async function generatePassageSets(
   onProgress?: (msg: string) => void
 ): Promise<PassageSet[]> {
   if (!apiKey) throw new Error('Gemini APIキーが設定されていません')
-  if (sources.length === 0) throw new Error('データソースが選択されていません')
-
   onProgress?.('Gemini APIに接続中...')
 
   const genAI = new GoogleGenerativeAI(apiKey)
@@ -135,7 +175,7 @@ export async function generatePassageSets(
     generationConfig: {
       responseMimeType: 'application/json',
       temperature: 0.8,
-      maxOutputTokens: 32768,
+      maxOutputTokens: 65536,
     },
   })
 
@@ -146,24 +186,30 @@ export async function generatePassageSets(
 
   const result = await model.generateContent(prompt)
   const text = result.response.text()
+  const finishReason = result.response.candidates?.[0]?.finishReason
 
   onProgress?.('レスポンスを解析中...')
 
-  let parsed: { passage_sets: unknown[] }
-  try {
-    parsed = extractJSON(text) as { passage_sets: unknown[] }
-  } catch (err) {
-    throw err
-  }
-
-  if (!Array.isArray(parsed.passage_sets)) {
-    throw new Error('無効なレスポンス形式です')
+  let passageSets: unknown[]
+  if (finishReason === 'MAX_TOKENS') {
+    passageSets = extractCompleteObjects(text, 'passage_sets')
+    if (passageSets.length === 0) throw new Error('AIの出力がトークン上限で打ち切られ、長文問題セットを取得できませんでした。問題数を減らして再試行してください。')
+    onProgress?.(`⚠️ 出力が打ち切られました。回収できたセット: ${passageSets.length}件`)
+  } else {
+    let parsed: { passage_sets: unknown[] }
+    try {
+      parsed = extractJSON(text) as { passage_sets: unknown[] }
+    } catch (err) {
+      throw err
+    }
+    if (!Array.isArray(parsed.passage_sets)) throw new Error('無効なレスポンス形式です')
+    passageSets = parsed.passage_sets
   }
 
   const defaultLevel = config.levels[0] ?? 'high_exam'
   const now = new Date().toISOString()
 
-  return parsed.passage_sets.map((ps: any) => ({
+  return passageSets.map((ps: any) => ({
     id: uuidv4(),
     title: String(ps.title ?? '長文読解問題'),
     passage: String(ps.passage ?? ''),

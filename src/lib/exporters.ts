@@ -1,10 +1,6 @@
 import type { Question, PassageSet } from '../types'
 import { QUESTION_TYPE_CONFIGS, EXAM_LEVEL_CONFIGS } from '../types'
-import {
-  Document, Packer, Paragraph, TextRun, HeadingLevel,
-  AlignmentType, BorderStyle, Table, TableRow, TableCell,
-  WidthType, ShadingType,
-} from 'docx'
+import { Document, Packer, Paragraph, TextRun } from 'docx'
 
 function typeLabel(type: string) {
   return QUESTION_TYPE_CONFIGS.find((c) => c.id === type)?.label ?? type
@@ -182,115 +178,60 @@ ${itemLines.join('\n')}
 export async function exportToDocx(questions: Question[]): Promise<Blob> {
   const date = new Date().toLocaleString('ja-JP')
 
-  const children: (Paragraph | Table)[] = [
-    new Paragraph({
-      text: '生成問題集',
-      heading: HeadingLevel.TITLE,
-      alignment: AlignmentType.CENTER,
-      spacing: { after: 120 },
-    }),
-    new Paragraph({
-      children: [
-        new TextRun({ text: `生成日時: ${date}　`, size: 20, color: '666666' }),
-        new TextRun({ text: `問題数: ${questions.length}問`, size: 20, color: '666666' }),
-      ],
-      alignment: AlignmentType.CENTER,
-      spacing: { after: 400 },
-    }),
+  const children: Paragraph[] = [
+    new Paragraph({ children: [new TextRun({ text: '生成問題集', bold: true, size: 32 })], spacing: { after: 80 } }),
+    new Paragraph({ children: [new TextRun({ text: `生成日時: ${date}　問題数: ${questions.length}問`, size: 20 })], spacing: { after: 400 } }),
   ]
 
   questions.forEach((q, i) => {
-    // 問題番号・種別見出し
     children.push(new Paragraph({
-      children: [
-        new TextRun({ text: `問${i + 1}　`, bold: true, size: 26 }),
-        new TextRun({ text: `【${typeLabel(q.type)}】`, size: 22, color: '6366f1' }),
-        new TextRun({ text: `【${levelLabel(q.level)}】`, size: 22, color: '7c3aed' }),
-      ],
-      spacing: { before: 320, after: 100 },
-      border: { bottom: { style: BorderStyle.SINGLE, size: 4, color: 'e5e7eb' } },
+      children: [new TextRun({ text: `問${i + 1}　${typeLabel(q.type)}`, bold: true, size: 24 })],
+      spacing: { before: 320, after: 120 },
     }))
 
     if (q.subject) {
       children.push(new Paragraph({
-        children: [new TextRun({ text: `科目: ${q.subject}`, italics: true, size: 20, color: '888888' })],
+        children: [new TextRun({ text: `科目: ${q.subject}`, size: 20 })],
         spacing: { after: 80 },
       }))
     }
 
-    // 問題文
     children.push(new Paragraph({
       children: [new TextRun({ text: q.content, size: 22 })],
-      spacing: { after: 160 },
+      spacing: { after: 120 },
     }))
 
-    // 選択肢
     if (q.choices?.length) {
       q.choices.forEach((c) => {
         children.push(new Paragraph({
-          children: [
-            new TextRun({ text: `${c.label}.  `, bold: true, size: 22 }),
-            new TextRun({ text: c.text, size: 22 }),
-          ],
+          children: [new TextRun({ text: `${c.label}. ${c.text}`, size: 22 })],
           indent: { left: 480 },
-          spacing: { after: 80 },
+          spacing: { after: 60 },
         }))
       })
     }
 
-    // 正解・解説（薄いシェーディングのテーブル）
-    children.push(new Table({
-      width: { size: 100, type: WidthType.PERCENTAGE },
-      rows: [
-        new TableRow({
-          children: [
-            new TableCell({
-              children: [
-                new Paragraph({
-                  children: [
-                    new TextRun({ text: '正解: ', bold: true, size: 20, color: '15803d' }),
-                    new TextRun({ text: q.correctAnswer, size: 20 }),
-                  ],
-                  spacing: { before: 60, after: 60 },
-                }),
-                new Paragraph({
-                  children: [
-                    new TextRun({ text: '解説: ', bold: true, size: 20, color: '1d4ed8' }),
-                    new TextRun({ text: q.explanation, size: 20 }),
-                  ],
-                  spacing: { before: 60, after: 60 },
-                }),
-              ],
-              shading: { type: ShadingType.SOLID, color: 'f8fafc', fill: 'f8fafc' },
-              margins: { top: 80, bottom: 80, left: 160, right: 160 },
-              borders: {
-                top:    { style: BorderStyle.SINGLE, size: 4, color: 'e2e8f0' },
-                bottom: { style: BorderStyle.SINGLE, size: 4, color: 'e2e8f0' },
-                left:   { style: BorderStyle.SINGLE, size: 4, color: 'e2e8f0' },
-                right:  { style: BorderStyle.SINGLE, size: 4, color: 'e2e8f0' },
-              },
-            }),
-          ],
-        }),
-      ],
+    children.push(new Paragraph({
+      children: [new TextRun({ text: `正解: ${q.correctAnswer}`, bold: true, size: 20 })],
+      spacing: { before: 120, after: 60 },
+    }))
+    children.push(new Paragraph({
+      children: [new TextRun({ text: `解説: ${q.explanation}`, size: 20 })],
+      spacing: { after: 60 },
     }))
 
     if (q.tags.length) {
       children.push(new Paragraph({
-        children: [new TextRun({ text: `タグ: ${q.tags.join(', ')}`, italics: true, size: 18, color: '9ca3af' })],
-        spacing: { before: 80, after: 80 },
+        children: [new TextRun({ text: `タグ: ${q.tags.join(', ')}`, size: 18 })],
+        spacing: { after: 60 },
       }))
     }
 
-    children.push(new Paragraph({ text: '', spacing: { after: 200 } }))
+    children.push(new Paragraph({ children: [new TextRun({ text: '─'.repeat(30), size: 18 })], spacing: { after: 200 } }))
   })
 
   const doc = new Document({
-    styles: {
-      default: {
-        document: { run: { font: 'Hiragino Kaku Gothic ProN', size: 22 } },
-      },
-    },
+    styles: { default: { document: { run: { font: 'Hiragino Kaku Gothic ProN', size: 22 } } } },
     sections: [{ children }],
   })
   return Packer.toBlob(doc)
@@ -299,148 +240,74 @@ export async function exportToDocx(questions: Question[]): Promise<Blob> {
 export async function exportPassagesToDocx(passageSets: PassageSet[]): Promise<Blob> {
   const date = new Date().toLocaleString('ja-JP')
 
-  const children: (Paragraph | Table)[] = [
-    new Paragraph({
-      text: '長文問題集',
-      heading: HeadingLevel.TITLE,
-      alignment: AlignmentType.CENTER,
-      spacing: { after: 120 },
-    }),
-    new Paragraph({
-      children: [
-        new TextRun({ text: `生成日時: ${date}　`, size: 20, color: '666666' }),
-        new TextRun({ text: `セット数: ${passageSets.length}セット`, size: 20, color: '666666' }),
-      ],
-      alignment: AlignmentType.CENTER,
-      spacing: { after: 400 },
-    }),
+  const children: Paragraph[] = [
+    new Paragraph({ children: [new TextRun({ text: '長文問題集', bold: true, size: 32 })], spacing: { after: 80 } }),
+    new Paragraph({ children: [new TextRun({ text: `生成日時: ${date}　セット数: ${passageSets.length}セット`, size: 20 })], spacing: { after: 400 } }),
   ]
 
   passageSets.forEach((ps, si) => {
     children.push(new Paragraph({
-      children: [
-        new TextRun({ text: `第${si + 1}問　${ps.title}`, bold: true, size: 28 }),
-      ],
-      heading: HeadingLevel.HEADING_1,
-      spacing: { before: 400, after: 160 },
+      children: [new TextRun({ text: `第${si + 1}問　${ps.title}`, bold: true, size: 28 })],
+      spacing: { before: 400, after: 120 },
     }))
 
     if (ps.subject) {
       children.push(new Paragraph({
-        children: [new TextRun({ text: `科目: ${ps.subject}　レベル: ${levelLabel(ps.level)}`, italics: true, size: 20, color: '888888' })],
+        children: [new TextRun({ text: `科目: ${ps.subject}　レベル: ${levelLabel(ps.level)}`, size: 20 })],
         spacing: { after: 120 },
       }))
     }
 
-    // 長文本文
     children.push(new Paragraph({
-      children: [new TextRun({ text: '【本 文】', bold: true, size: 22, color: '374151' })],
+      children: [new TextRun({ text: '【本文】', bold: true, size: 22 })],
       spacing: { after: 80 },
     }))
-    children.push(new Table({
-      width: { size: 100, type: WidthType.PERCENTAGE },
-      rows: [
-        new TableRow({
-          children: [
-            new TableCell({
-              children: ps.passage.split('\n').map((line) =>
-                new Paragraph({
-                  children: [new TextRun({ text: line, size: 22 })],
-                  spacing: { after: 80 },
-                })
-              ),
-              shading: { type: ShadingType.SOLID, color: 'fefce8', fill: 'fefce8' },
-              margins: { top: 120, bottom: 120, left: 200, right: 200 },
-              borders: {
-                top:    { style: BorderStyle.SINGLE, size: 4, color: 'fde68a' },
-                bottom: { style: BorderStyle.SINGLE, size: 4, color: 'fde68a' },
-                left:   { style: BorderStyle.THICK,  size: 12, color: 'f59e0b' },
-                right:  { style: BorderStyle.SINGLE, size: 4, color: 'fde68a' },
-              },
-            }),
-          ],
-        }),
-      ],
-    }))
+
+    ps.passage.split('\n').forEach((line) => {
+      children.push(new Paragraph({
+        children: [new TextRun({ text: line, size: 22 })],
+        spacing: { after: 60 },
+      }))
+    })
 
     children.push(new Paragraph({ text: '', spacing: { after: 200 } }))
 
-    // 小問
     ps.questions.forEach((sq, qi) => {
       children.push(new Paragraph({
-        children: [
-          new TextRun({ text: `問${qi + 1}　`, bold: true, size: 24 }),
-          new TextRun({ text: `【${typeLabel(sq.type)}】`, size: 20, color: '6366f1' }),
-        ],
-        spacing: { before: 200, after: 100 },
+        children: [new TextRun({ text: `問${qi + 1}　${typeLabel(sq.type)}`, bold: true, size: 24 })],
+        spacing: { before: 200, after: 80 },
       }))
 
       children.push(new Paragraph({
         children: [new TextRun({ text: sq.content, size: 22 })],
-        spacing: { after: 120 },
+        spacing: { after: 100 },
       }))
 
       if (sq.choices?.length) {
         sq.choices.forEach((c) => {
           children.push(new Paragraph({
-            children: [
-              new TextRun({ text: `${c.label}.  `, bold: true, size: 22 }),
-              new TextRun({ text: c.text, size: 22 }),
-            ],
+            children: [new TextRun({ text: `${c.label}. ${c.text}`, size: 22 })],
             indent: { left: 480 },
-            spacing: { after: 80 },
+            spacing: { after: 60 },
           }))
         })
       }
 
-      children.push(new Table({
-        width: { size: 100, type: WidthType.PERCENTAGE },
-        rows: [
-          new TableRow({
-            children: [
-              new TableCell({
-                children: [
-                  new Paragraph({
-                    children: [
-                      new TextRun({ text: '正解: ', bold: true, size: 20, color: '15803d' }),
-                      new TextRun({ text: sq.correctAnswer, size: 20 }),
-                    ],
-                    spacing: { before: 60, after: 60 },
-                  }),
-                  new Paragraph({
-                    children: [
-                      new TextRun({ text: '解説: ', bold: true, size: 20, color: '1d4ed8' }),
-                      new TextRun({ text: sq.explanation, size: 20 }),
-                    ],
-                    spacing: { before: 60, after: 60 },
-                  }),
-                ],
-                shading: { type: ShadingType.SOLID, color: 'f8fafc', fill: 'f8fafc' },
-                margins: { top: 80, bottom: 80, left: 160, right: 160 },
-                borders: {
-                  top:    { style: BorderStyle.SINGLE, size: 4, color: 'e2e8f0' },
-                  bottom: { style: BorderStyle.SINGLE, size: 4, color: 'e2e8f0' },
-                  left:   { style: BorderStyle.SINGLE, size: 4, color: 'e2e8f0' },
-                  right:  { style: BorderStyle.SINGLE, size: 4, color: 'e2e8f0' },
-                },
-              }),
-            ],
-          }),
-        ],
+      children.push(new Paragraph({
+        children: [new TextRun({ text: `正解: ${sq.correctAnswer}`, bold: true, size: 20 })],
+        spacing: { before: 100, after: 60 },
       }))
-
-      children.push(new Paragraph({ text: '', spacing: { after: 120 } }))
+      children.push(new Paragraph({
+        children: [new TextRun({ text: `解説: ${sq.explanation}`, size: 20 })],
+        spacing: { after: 120 },
+      }))
     })
 
-    children.push(new Paragraph({ text: '', spacing: { after: 320 } }))
+    children.push(new Paragraph({ children: [new TextRun({ text: '═'.repeat(30), size: 18 })], spacing: { after: 300 } }))
   })
 
   const doc = new Document({
-    styles: {
-      default: {
-        document: { run: { font: 'Hiragino Kaku Gothic ProN', size: 22 } },
-      },
-    },
+    styles: { default: { document: { run: { font: 'Hiragino Kaku Gothic ProN', size: 22 } } } },
     sections: [{ children }],
   })
   return Packer.toBlob(doc)

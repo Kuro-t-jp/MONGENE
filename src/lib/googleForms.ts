@@ -111,7 +111,7 @@ export async function createGoogleFormFromQuestions(
   accessToken: string,
   title: string,
   questions: Question[]
-): Promise<string> {
+): Promise<{ url: string; formId: string; addedCount: number }> {
   // Step 1: Create blank form
   const createRes = await fetch('https://forms.googleapis.com/v1/forms', {
     method: 'POST',
@@ -128,16 +128,33 @@ export async function createGoogleFormFromQuestions(
   const form = await createRes.json()
   const formId: string = form.formId
 
-  // Step 2: batchUpdate — enable quiz + add all questions
-  const requests: unknown[] = [
+  // Step 2: Enable quiz mode (separate call to isolate errors)
+  const settingsRes = await fetch(
+    `https://forms.googleapis.com/v1/forms/${formId}:batchUpdate`,
     {
-      updateSettings: {
-        settings: { quizSettings: { isQuiz: true } },
-        updateMask: 'quizSettings',
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
       },
-    },
-    ...questions.map((q, i) => buildItemRequest(q, i)),
-  ]
+      body: JSON.stringify({
+        requests: [{
+          updateSettings: {
+            settings: { quizSettings: { isQuiz: true } },
+            updateMask: 'quizSettings',
+          },
+        }],
+      }),
+    }
+  )
+  if (!settingsRes.ok) {
+    const err = await settingsRes.json().catch(() => ({}))
+    console.warn('[MONGENE] Quiz settings failed:', err)
+    // Continue even if quiz mode fails - questions can still be added
+  }
+
+  // Step 3: Add questions in a separate batchUpdate
+  const itemRequests = questions.map((q, i) => buildItemRequest(q, i))
 
   const batchRes = await fetch(
     `https://forms.googleapis.com/v1/forms/${formId}:batchUpdate`,
@@ -147,15 +164,20 @@ export async function createGoogleFormFromQuestions(
         Authorization: `Bearer ${accessToken}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ requests }),
+      body: JSON.stringify({ requests: itemRequests }),
     }
   )
+  const batchBody = await batchRes.json().catch(() => null)
+
   if (!batchRes.ok) {
-    const err = await batchRes.json()
-    throw new Error(`問題追加エラー: ${err.error?.message ?? JSON.stringify(err)}`)
+    const msg = batchBody?.error?.message ?? JSON.stringify(batchBody)
+    throw new Error(`問題追加エラー (${batchRes.status}): ${msg}`)
   }
 
-  return form.responderUri ?? `https://docs.google.com/forms/d/${formId}/viewform`
+  const addedCount = batchBody?.replies?.filter((r: unknown) => r != null).length ?? 0
+  const url = form.responderUri ?? `https://docs.google.com/forms/d/${formId}/viewform`
+
+  return { url, formId, addedCount }
 }
 
 function buildItemRequest(q: Question, index: number): unknown {
@@ -181,6 +203,7 @@ function buildItemRequest(q: Question, index: number): unknown {
       createItem: {
         item: {
           title: q.content,
+          description: q.explanation ? `解説: ${q.explanation}` : undefined,
           questionItem: {
             question: {
               required: true,
@@ -188,9 +211,12 @@ function buildItemRequest(q: Question, index: number): unknown {
               grading: {
                 pointValue: 1,
                 correctAnswers: { answers: [{ value: correctValue }] },
-                ...(q.explanation
-                  ? { generalFeedback: { text: `解説: ${q.explanation}` } }
-                  : {}),
+                whenRight: q.explanation
+                  ? { text: `解説: ${q.explanation}` }
+                  : undefined,
+                whenWrong: q.explanation
+                  ? { text: `解説: ${q.explanation}` }
+                  : undefined,
               },
             },
           },

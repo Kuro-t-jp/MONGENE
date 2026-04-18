@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useAppStore } from '../store/appStore'
-import { EXAM_LEVEL_CONFIGS, QUESTION_TYPE_CONFIGS } from '../types'
-import type { ExamLevel, QuestionType } from '../types'
+import { EXAM_LEVEL_CONFIGS, QUESTION_TYPE_CONFIGS, CURRICULUM_STAGE_CONFIGS } from '../types'
+import type { ExamLevel, QuestionType, CurriculumStage } from '../types'
 import { generateQuestions, generatePassageSets } from '../lib/gemini'
 
 export default function GeneratorView() {
@@ -54,8 +54,8 @@ export default function GeneratorView() {
       setError('設定画面でGemini APIキーを設定してください。')
       return
     }
-    if (selected.length === 0) {
-      setError('データソース画面で少なくとも1つのソースを選択してください。')
+    if (selected.length === 0 && config.curriculumStage === 'none') {
+      setError('データソースを選択するか、学習指導要領の単元を選択してください。')
       return
     }
 
@@ -94,7 +94,8 @@ export default function GeneratorView() {
     }
   }
 
-  const canGenerate = selected.length > 0 && !!settings.geminiApiKey && !isGenerating
+  const hasCurriculum = config.curriculumStage !== 'none'
+  const canGenerate = (selected.length > 0 || hasCurriculum) && !!settings.geminiApiKey && !isGenerating
 
   // ── Styles ────────────────────────────────────────────────────────────────
   const card: React.CSSProperties = {
@@ -166,22 +167,26 @@ export default function GeneratorView() {
         <div
           style={{
             ...card,
-            borderColor: selected.length > 0 ? 'var(--color-border-strong)' : 'rgba(239,68,68,0.3)',
-            background:  selected.length > 0 ? 'var(--color-surface-2)'     : 'rgba(239,68,68,0.05)',
+            borderColor: (selected.length > 0 || hasCurriculum) ? 'var(--color-border-strong)' : 'rgba(239,68,68,0.3)',
+            background:  (selected.length > 0 || hasCurriculum) ? 'var(--color-surface-2)'     : 'rgba(239,68,68,0.05)',
             display: 'flex', alignItems: 'center', gap: 14,
           }}
         >
-          <span style={{ fontSize: 22 }}>{selected.length > 0 ? '✅' : '⚠️'}</span>
+          <span style={{ fontSize: 22 }}>{selected.length > 0 ? '✅' : hasCurriculum ? '📚' : '⚠️'}</span>
           <div style={{ flex: 1 }}>
             <p style={{ margin: 0, fontSize: 14, fontWeight: 600 }}>
               {selected.length > 0
                 ? `${selected.length}件のデータソースが選択されています`
-                : 'データソースが選択されていません'}
+                : hasCurriculum
+                  ? '学習指導要領の単元から生成します'
+                  : 'データソースが選択されていません'}
             </p>
             <p style={{ margin: '2px 0 0', fontSize: 12, color: 'var(--color-text-muted)' }}>
               {selected.length > 0
                 ? `合計 ${selected.reduce((a, s) => a + s.content.length, 0).toLocaleString()} 文字`
-                : 'データソース画面でファイルを追加・選択してください'}
+                : hasCurriculum
+                  ? 'データソースなしでも単元に基づいて問題を生成できます'
+                  : 'データソース画面でファイルを追加するか、学習指導要領を選択してください'}
             </p>
           </div>
           {selected.length === 0 && (
@@ -281,6 +286,71 @@ export default function GeneratorView() {
               )
             })}
           </div>
+        </div>
+
+        {/* ── Curriculum Stage ─────────────────────────────────────────────── */}
+        <div style={card}>
+          <p style={sectionTitle}>
+            学習指導要領<span style={subNote}>（任意）令和3年度告示準拠</span>
+          </p>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
+            {CURRICULUM_STAGE_CONFIGS.map((s) => {
+              const active = (config.curriculumStage ?? 'none') === s.id
+              return (
+                <button
+                  key={s.id}
+                  onClick={() => updateConfig({ curriculumStage: s.id as CurriculumStage })}
+                  style={{
+                    padding: '7px 16px', borderRadius: 20, cursor: 'pointer',
+                    border: `1px solid ${active ? 'var(--color-primary)' : 'var(--color-border)'}`,
+                    background: active ? 'rgba(99,102,241,0.14)' : 'var(--color-surface-3)',
+                    color: active ? 'var(--color-primary-hover)' : 'var(--color-text-muted)',
+                    fontSize: 13, fontWeight: active ? 700 : 400, transition: 'all 0.15s',
+                  }}
+                >
+                  {s.emoji ? `${s.emoji} ` : ''}{s.label}
+                </button>
+              )
+            })}
+          </div>
+          {(config.curriculumStage ?? 'none') !== 'none' && (() => {
+            const stageConf = CURRICULUM_STAGE_CONFIGS.find((s) => s.id === config.curriculumStage)
+            if (!stageConf || stageConf.chapters.length === 0) return null
+            return (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                <p style={{ fontSize: 11, color: 'var(--color-text-dim)', margin: 0 }}>
+                  小単元をクリックすると「科目・テーマ」欄に入力されます
+                </p>
+                {stageConf.chapters.map((ch) => (
+                  <div key={ch.chapter}>
+                    <p style={{
+                      margin: '0 0 5px',
+                      fontSize: 11, fontWeight: 700,
+                      color: 'var(--color-text-muted)',
+                      letterSpacing: '0.02em',
+                    }}>
+                      {ch.chapter}
+                    </p>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                      {ch.units.map((unit) => (
+                        <button
+                          key={unit}
+                          onClick={() => updateConfig({ subject: unit })}
+                          style={{
+                            padding: '3px 10px', borderRadius: 12, cursor: 'pointer', fontSize: 11,
+                            border: `1px solid ${config.subject === unit ? 'var(--color-primary)' : 'var(--color-border)'}`,
+                            background: config.subject === unit ? 'rgba(99,102,241,0.14)' : 'var(--color-surface-3)',
+                            color: config.subject === unit ? 'var(--color-primary-hover)' : 'var(--color-text-muted)',
+                            transition: 'all 0.1s',
+                          }}
+                        >{unit}</button>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )
+          })()}
         </div>
 
         {/* ── Count & Subject ──────────────────────────────────────────────── */}

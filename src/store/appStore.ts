@@ -21,6 +21,7 @@ interface AppState {
   isGenerating: boolean
   generationProgress: string
   googleAuth: GoogleAuthState | null
+  urlHistory: string[]
 
   // DataSource
   addDataSource: (source: DataSource) => void
@@ -49,6 +50,8 @@ interface AppState {
   setIsGenerating: (b: boolean) => void
   setGenerationProgress: (p: string) => void
   setGoogleAuth: (auth: GoogleAuthState | null) => void
+  addUrlHistory: (url: string) => void
+  clearUrlHistory: () => void
 }
 
 const defaultConfig: GenerationConfig = {
@@ -61,6 +64,7 @@ const defaultConfig: GenerationConfig = {
   questionsPerPassage: 5,
   subject: '',
   additionalInstructions: '',
+  curriculumStage: 'none',
 }
 
 const defaultSettings: AppSettings = {
@@ -83,6 +87,7 @@ export const useAppStore = create<AppState>()(
       isGenerating: false,
       generationProgress: '',
       googleAuth: null,
+      urlHistory: [],
 
       addDataSource: (source) =>
         set((s) => ({ dataSources: [...s.dataSources, source] })),
@@ -137,26 +142,41 @@ export const useAppStore = create<AppState>()(
       setIsGenerating: (b) => set({ isGenerating: b }),
       setGenerationProgress: (p) => set({ generationProgress: p }),
       setGoogleAuth: (auth) => set({ googleAuth: auth }),
+      addUrlHistory: (url) =>
+        set((s) => ({
+          urlHistory: [url, ...s.urlHistory.filter((u) => u !== url)].slice(0, 20),
+        })),
+      clearUrlHistory: () => set({ urlHistory: [] }),
     }),
     {
       name: 'mongene-v1',
-      version: 2,
-      migrate: (state: any) => ({
-        ...state,
-        passageSets: state.passageSets ?? [],
-        generationConfig: {
-          generationMode: 'individual',
-          passageCount: 2,
-          questionsPerPassage: 5,
-          ...state.generationConfig,
-        },
-      }),
+      version: 4,
+      migrate: (state: any) => {
+        const prevConfig = state.generationConfig ?? {}
+        const validStages = ['none', 'high_biology', 'high_biology_basic']
+        return {
+          ...state,
+          passageSets: state.passageSets ?? [],
+          urlHistory: Array.isArray(state.urlHistory) ? state.urlHistory : [],
+          generationConfig: {
+            generationMode: 'individual',
+            passageCount: 2,
+            questionsPerPassage: 5,
+            ...prevConfig,
+            // 無効値や未定義の場合は安全なデフォルトにリセット
+            curriculumStage: validStages.includes(prevConfig.curriculumStage)
+              ? prevConfig.curriculumStage
+              : 'none',
+          },
+        }
+      },
       partialize: (s) => ({
         dataSources: s.dataSources,
         questions: s.questions,
         passageSets: s.passageSets,
         generationConfig: s.generationConfig,
         settings: s.settings,
+        urlHistory: s.urlHistory,
       }),
     }
   )

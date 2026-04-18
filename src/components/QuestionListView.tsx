@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { invoke } from '@tauri-apps/api/core'
 import { useAppStore } from '../store/appStore'
 import { QUESTION_TYPE_CONFIGS, EXAM_LEVEL_CONFIGS } from '../types'
 import type { QuestionType, ExamLevel } from '../types'
@@ -25,6 +26,7 @@ export default function QuestionListView() {
   const [filterType,  setFilterType]  = useState<QuestionType | 'all'>('all')
   const [filterLevel, setFilterLevel] = useState<ExamLevel | 'all'>('all')
   const [gFormLoading, setGFormLoading] = useState(false)
+  const [exportError, setExportError] = useState<string | null>(null)
   const [confirm, setConfirm] = useState<{ message: string; onOk: () => void } | null>(null)
 
   const showConfirm = (message: string, onOk: () => void) => setConfirm({ message, onOk })
@@ -55,32 +57,38 @@ export default function QuestionListView() {
   }
 
   const handleExport = async (fmt: 'md' | 'json' | 'txt' | 'docx') => {
+    setExportError(null)
     const date = new Date().toISOString().split('T')[0]
-    switch (fmt) {
-      case 'md':   downloadFile(exportToMarkdown(exportTarget),   `mongene_${date}.md`,   'text/markdown'); break
-      case 'json': downloadFile(exportToJSON(exportTarget),        `mongene_${date}.json`, 'application/json'); break
-      case 'txt':  downloadFile(exportToText(exportTarget),        `mongene_${date}.txt`,  'text/plain'); break
-      case 'docx': {
-        const blob = await exportToDocx(exportTarget)
-        const url = URL.createObjectURL(blob)
-        const a = document.createElement('a')
-        a.href = url; a.download = `mongene_${date}.docx`
-        document.body.appendChild(a); a.click()
-        document.body.removeChild(a); URL.revokeObjectURL(url)
-        break
+    try {
+      switch (fmt) {
+        case 'md':   downloadFile(exportToMarkdown(exportTarget),   `mongene_${date}.md`,   'text/markdown'); break
+        case 'json': downloadFile(exportToJSON(exportTarget),        `mongene_${date}.json`, 'application/json'); break
+        case 'txt':  downloadFile(exportToText(exportTarget),        `mongene_${date}.txt`,  'text/plain'); break
+        case 'docx': {
+          const blob = await exportToDocx(exportTarget)
+          const arr = Array.from(new Uint8Array(await blob.arrayBuffer()))
+          const savedPath = await invoke<string>('save_bytes_to_downloads', { filename: `mongene_${date}.docx`, data: arr })
+          setExportError(`✅ 保存しました: ${savedPath}`)
+          break
+        }
       }
+    } catch (err) {
+      setExportError(`❌ エクスポートに失敗しました: ${String(err)}`)
     }
   }
 
   const handleExportPassagesDocx = async () => {
+    setExportError(null)
     const date = new Date().toISOString().split('T')[0]
-    const target = checkedPassages.length > 0 ? checkedPassages : passageSets
-    const blob = await exportPassagesToDocx(target)
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url; a.download = `mongene_passage_${date}.docx`
-    document.body.appendChild(a); a.click()
-    document.body.removeChild(a); URL.revokeObjectURL(url)
+    try {
+      const target = checkedPassages.length > 0 ? checkedPassages : passageSets
+      const blob = await exportPassagesToDocx(target)
+      const arr = Array.from(new Uint8Array(await blob.arrayBuffer()))
+      const savedPath = await invoke<string>('save_bytes_to_downloads', { filename: `mongene_passage_${date}.docx`, data: arr })
+      setExportError(`✅ 保存しました: ${savedPath}`)
+    } catch (err) {
+      setExportError(`Word エクスポートに失敗しました: ${String(err)}`)
+    }
   }
 
   const handleCreateGoogleForm = async () => {
@@ -100,15 +108,35 @@ export default function QuestionListView() {
         setGoogleAuth(auth)
       }
       const date = new Date().toLocaleString('ja-JP')
-      const url = await createGoogleFormFromQuestions(auth.accessToken, `問題集 (${date})`, exportTarget)
-      await openUrl(url)
+      const title = `問題集 (${date})`
+      const result = await createGoogleFormFromQuestions(auth.accessToken, title, exportTarget)
+
+      // ローカルにJSONファイルとして保存
+      const baseJson = JSON.parse(exportToJSON(exportTarget)) as Record<string, unknown>
+      baseJson.googleFormTitle = title
+      baseJson.googleFormUrl = result.url
+      baseJson.googleFormId = result.formId
+      baseJson.addedToForm = result.addedCount
+      const safeDate = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
+      const filename = `mongene_gform_${safeDate}.json`
+      const jsonStr = JSON.stringify(baseJson, null, 2)
+      const encoder = new TextEncoder()
+      const bytes = Array.from(encoder.encode(jsonStr))
+      try {
+        const savedPath = await invoke<string>('save_bytes_to_downloads', { filename, data: bytes })
+        setExportError(`✅ フォーム作成完了 (${result.addedCount}問) / JSON: ${savedPath}`)
+      } catch (saveErr) {
+        setExportError(`✅ フォーム完了 (${result.addedCount}問) / ⚠️ JSON保存失敗: ${String(saveErr)}`)
+      }
+
+      await openUrl(result.url)
     } catch (err) {
       const msg = String(err)
       if (msg.includes('401') || msg.includes('invalid_token')) {
         setGoogleAuth(null)
-        alert('認証が失効しました。もう一度お試しください。')
+        setExportError('⚠️ 認証が失効しました。もう一度お試しください。')
       } else {
-        alert(`エラー: ${msg}`)
+        setExportError(`❌ エラー: ${msg}`)
       }
     } finally {
       setGFormLoading(false)
@@ -222,6 +250,14 @@ export default function QuestionListView() {
                 🗑 クリア
               </button>
             </div>
+            {exportError && (
+              <div style={{ padding: '8px 14px', borderRadius: 8,
+                background: exportError.startsWith('✅') ? 'rgba(34,197,94,0.1)' : 'rgba(239,68,68,0.1)',
+                border: `1px solid ${exportError.startsWith('✅') ? 'rgba(34,197,94,0.3)' : 'rgba(239,68,68,0.3)'}`,
+                color: exportError.startsWith('✅') ? '#4ade80' : '#f87171', fontSize: 13 }}>
+                {exportError}
+              </div>
+            )}
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
               <select
                 value={filterType}
@@ -250,6 +286,7 @@ export default function QuestionListView() {
             </div>
           </>
         ) : (
+          <>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
             <div style={{ flex: '0 0 auto' }}>
               <span style={{ fontSize: 16, fontWeight: 700 }}>長文問題一覧</span>
@@ -271,6 +308,15 @@ export default function QuestionListView() {
               🗑 クリア
             </button>
           </div>
+          {exportError && (
+            <div style={{ padding: '8px 14px', borderRadius: 8,
+              background: exportError.startsWith('✅') ? 'rgba(34,197,94,0.1)' : 'rgba(239,68,68,0.1)',
+              border: `1px solid ${exportError.startsWith('✅') ? 'rgba(34,197,94,0.3)' : 'rgba(239,68,68,0.3)'}`,
+              color: exportError.startsWith('✅') ? '#4ade80' : '#f87171', fontSize: 13 }}>
+              {exportError}
+            </div>
+          )}
+          </>
         )}
       </div>
 
