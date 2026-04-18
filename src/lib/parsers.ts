@@ -5,14 +5,20 @@ async function getPdfJs() {
   const pdfjsLib = await import('pdfjs-dist')
   // Use the bundled worker via Vite's URL resolution
   if (!pdfjsLib.GlobalWorkerOptions.workerSrc) {
-    try {
-      pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
-        'pdfjs-dist/build/pdf.worker.min.mjs',
-        import.meta.url
-      ).toString()
-    } catch {
-      // Fallback: inline fake worker (single-threaded)
-      pdfjsLib.GlobalWorkerOptions.workerSrc = ''
+    // GAS ビルドでは CDN の worker を使用（singlefile 環境では別ファイルが不可）
+    if (import.meta.env.VITE_GAS_BUILD === 'true') {
+      pdfjsLib.GlobalWorkerOptions.workerSrc =
+        `https://cdn.jsdelivr.net/npm/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`
+    } else {
+      try {
+        pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
+          'pdfjs-dist/build/pdf.worker.min.mjs',
+          import.meta.url
+        ).toString()
+      } catch {
+        // Fallback: inline fake worker (single-threaded)
+        pdfjsLib.GlobalWorkerOptions.workerSrc = ''
+      }
     }
   }
   return pdfjsLib

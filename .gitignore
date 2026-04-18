@@ -12,6 +12,11 @@ dist
 dist-ssr
 *.local
 
+# GAS ビルド成果物 (gas/index.html はビルド生成物)
+gas/index.html
+gas/tauri.svg
+gas/vite.svg
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

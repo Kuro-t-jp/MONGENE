@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "build:web": "WEB_BUILD=true tsc && WEB_BUILD=true vite build",
+    "build:gas": "tsc --noEmit && vite build --config vite.config.gas.ts",
     "preview": "vite preview",
     "tauri": "tauri"
   },
@@ -35,6 +36,7 @@
     "@types/react-dom": "^19.1.6",
     "@vitejs/plugin-react": "^4.6.0",
     "typescript": "~5.8.3",
-    "vite": "^7.0.4"
+    "vite": "^7.0.4",
+    "vite-plugin-singlefile": "^2.3.3"
   }
 }
