@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <meta charset="utf-8">
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{font-family:-apple-system,'Segoe UI',sans-serif;background:#0f0f17;color:#e2e8f0;font-size:13px;padding:12px;overflow-y:auto}
+    .card{background:#1a1a2e;border:1px solid #2d2d4e;border-radius:10px;padding:12px 14px;margin-bottom:8px}
+    label{display:block;font-size:11px;font-weight:700;color:#a78bfa;text-transform:uppercase;letter-spacing:.06em;margin-bottom:7px}
+    input[type=text],input[type=password],select,textarea{width:100%;background:#0f0f17;color:#e2e8f0;border:1px solid #2d2d4e;border-radius:6px;padding:7px 10px;font-size:13px;outline:none;font-family:inherit}
+    input[type=text]:focus,input[type=password]:focus,select:focus,textarea:focus{border-color:#6d28d9}
+    textarea{resize:vertical;min-height:70px}
+    select option{background:#1a1a2e}
+    .row{display:flex;gap:8px;align-items:center}
+    .row input{flex:1}
+    .save-btn{background:#374151;color:#e2e8f0;border:none;border-radius:6px;padding:7px 12px;cursor:pointer;font-size:12px;white-space:nowrap}
+    .save-btn:hover{background:#4b5563}
+    .toggle-group{display:flex;gap:6px}
+    .toggle{flex:1;padding:7px;background:#0f0f17;color:#94a3b8;border:1px solid #2d2d4e;border-radius:7px;cursor:pointer;font-size:12px;font-weight:600;text-align:center}
+    .toggle.active{background:linear-gradient(135deg,#4f46e5,#7c3aed);color:#fff;border-color:transparent}
+    .chips{display:flex;flex-wrap:wrap;gap:5px}
+    .chip{padding:5px 11px;background:#0f0f17;color:#94a3b8;border:1px solid #2d2d4e;border-radius:20px;cursor:pointer;font-size:12px}
+    .chip.active{background:#4f46e5;color:#fff;border-color:#4f46e5}
+    input[type=range]{width:100%;accent-color:#6d28d9;margin-top:4px}
+    .gen-btn{width:100%;padding:13px;background:linear-gradient(135deg,#4f46e5,#7c3aed);color:#fff;border:none;border-radius:10px;font-size:15px;font-weight:700;cursor:pointer;margin-top:4px;transition:opacity .15s}
+    .gen-btn:hover{opacity:.9}
+    .gen-btn:disabled{opacity:.5;cursor:not-allowed}
+    .status-ok{background:#064e3b;color:#6ee7b7;border:1px solid #065f46;border-radius:8px;padding:10px 14px;margin-top:6px}
+    .status-err{background:#450a0a;color:#fca5a5;border:1px solid #7f1d1d;border-radius:8px;padding:10px 14px;margin-top:6px}
+    .api-status{font-size:11px;color:#6ee7b7;margin-top:5px}
+    .count-val{font-size:14px;font-weight:700;color:#a78bfa}
+    .hidden{display:none}
+    .section-row{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  </style>
+</head>
+<body>
+  <!-- API キー -->
+  <div class="card">
+    <label>🔑 Gemini API キー</label>
+    <div class="row">
+      <input type="password" id="apiKey" placeholder="AIzaSy...">
+      <button class="save-btn" onclick="saveApiKey()">保存</button>
+    </div>
+    <div class="api-status" id="apiStatus"></div>
+  </div>
+
+  <!-- モード -->
+  <div class="card">
+    <label>生成モード</label>
+    <div class="toggle-group">
+      <button class="toggle active" id="modeInd" onclick="setMode('individual')">📝 一問一答</button>
+      <button class="toggle"        id="modePas" onclick="setMode('passage')">📖 長文問題</button>
+    </div>
+  </div>
+
+  <div class="section-row">
+    <!-- モデル -->
+    <div class="card">
+      <label>モデル</label>
+      <select id="model">
+        <option value="gemini-2.5-flash-lite" selected>2.5 Flash Lite（推奨）</option>
+        <option value="gemini-2.5-flash-preview-04-17">2.5 Flash（高精度）</option>
+        <option value="gemini-1.5-flash">1.5 Flash</option>
+        <option value="gemini-1.5-pro">1.5 Pro（最高精度）</option>
+      </select>
+    </div>
+    <!-- 科目 -->
+    <div class="card">
+      <label>科目・分野</label>
+      <input type="text" id="subject" placeholder="生物基礎、世界史 など">
+    </div>
+  </div>
+
+  <!-- 難易度 -->
+  <div class="card">
+    <label>難易度</label>
+    <div class="chips">
+      <button class="chip active" data-val="high_exam"      onclick="setChip(this,'level')">高校入試</button>
+      <button class="chip"        data-val="center_exam"    onclick="setChip(this,'level')">共通テスト</button>
+      <button class="chip"        data-val="university_exam" onclick="setChip(this,'level')">大学入試 二次</button>
+      <button class="chip"        data-val="custom"         onclick="setChip(this,'level')">カスタム</button>
+    </div>
+    <input type="text" id="customLevel" class="hidden" placeholder="カスタム難易度を入力..." style="margin-top:7px">
+  </div>
+
+  <!-- 問題形式 -->
+  <div class="card" id="typeCard">
+    <label>問題形式</label>
+    <div class="chips">
+      <button class="chip active" data-val="multiple_choice_4" onclick="setChip(this,'type')">4択</button>
+      <button class="chip"        data-val="multiple_choice_5" onclick="setChip(this,'type')">5択</button>
+      <button class="chip"        data-val="true_false"        onclick="setChip(this,'type')">正誤</button>
+      <button class="chip"        data-val="fill_in_blank"     onclick="setChip(this,'type')">穴埋め</button>
+      <button class="chip"        data-val="short_answer"      onclick="setChip(this,'type')">短答</button>
+      <button class="chip"        data-val="essay"             onclick="setChip(this,'type')">論述</button>
+    </div>
+  </div>
+
+  <!-- カウント -->
+  <div class="card">
+    <label id="countLabel">問題数: <span class="count-val">5</span> 問</label>
+    <div id="indCount">
+      <input type="range" id="count" min="1" max="20" value="5" oninput="updateCountLabel()">
+    </div>
+    <div id="pasCount" class="hidden">
+      <div style="margin-bottom:6px">
+        セット数: <span class="count-val" id="passageCountVal">2</span>
+        <input type="range" id="passageCount" min="1" max="5" value="2" oninput="document.getElementById('passageCountVal').textContent=this.value">
+      </div>
+      設問数/セット: <span class="count-val" id="qpsVal">5</span>
+      <input type="range" id="questionsPerPassage" min="2" max="10" value="5" oninput="document.getElementById('qpsVal').textContent=this.value">
+    </div>
+  </div>
+
+  <!-- 参考テキスト -->
+  <div class="card">
+    <label>参考テキスト（オプション）</label>
+    <textarea id="sourceText" placeholder="教科書・資料のテキストを貼り付けてください。問題の内容がより具体的になります。" rows="4"></textarea>
+  </div>
+
+  <!-- 追加指示 -->
+  <div class="card">
+    <label>追加指示（オプション）</label>
+    <input type="text" id="extra" placeholder="例: 図表に関する問題を含めてください">
+  </div>
+
+  <!-- ステータス -->
+  <div id="statusArea"></div>
+
+  <!-- 生成ボタン -->
+  <button class="gen-btn" id="genBtn" onclick="generate()">⚡ 生成する</button>
+
+<script>
+  var selLevel = 'high_exam';
+  var selType  = 'multiple_choice_4';
+  var selMode  = 'individual';
+
+  // 起動時APIキー読み込み
+  google.script.run
+    .withSuccessHandler(function(k) {
+      if (k) {
+        document.getElementById('apiKey').value = k;
+        document.getElementById('apiStatus').textContent = '✅ APIキーが保存されています';
+      }
+    })
+    .serverGetApiKey();
+
+  function saveApiKey() {
+    var k = document.getElementById('apiKey').value.trim();
+    if (!k) return;
+    google.script.run
+      .withSuccessHandler(function() {
+        document.getElementById('apiStatus').textContent = '✅ 保存しました';
+      })
+      .serverSetApiKey(k);
+  }
+
+  function setMode(m) {
+    selMode = m;
+    document.getElementById('modeInd').className = 'toggle' + (m==='individual'?' active':'');
+    document.getElementById('modePas').className = 'toggle' + (m==='passage'?' active':'');
+    document.getElementById('indCount').className = m==='individual' ? '' : 'hidden';
+    document.getElementById('pasCount').className = m==='passage'   ? '' : 'hidden';
+    document.getElementById('typeCard').style.opacity = m==='passage' ? '.5' : '1';
+    var label = document.getElementById('countLabel');
+    label.innerHTML = m==='individual'
+      ? '問題数: <span class="count-val">'+document.getElementById('count').value+'</span> 問'
+      : 'セット・設問数';
+  }
+
+  function setChip(btn, group) {
+    var prefix = group === 'level' ? '[data-val]' : '[data-val]';
+    var parent = btn.parentElement;
+    parent.querySelectorAll('.chip').forEach(function(c){c.classList.remove('active');});
+    btn.classList.add('active');
+    if (group === 'level') {
+      selLevel = btn.dataset.val;
+      document.getElementById('customLevel').className = selLevel==='custom' ? '' : 'hidden';
+    } else {
+      selType = btn.dataset.val;
+    }
+  }
+
+  function updateCountLabel() {
+    var v = document.getElementById('count').value;
+    document.getElementById('countLabel').innerHTML = '問題数: <span class="count-val">'+v+'</span> 問';
+  }
+
+  function generate() {
+    var config = {
+      apiKey:                 document.getElementById('apiKey').value.trim(),
+      model:                  document.getElementById('model').value,
+      generationMode:         selMode,
+      level:                  selLevel,
+      customLevel:            document.getElementById('customLevel').value,
+      questionType:           selType,
+      count:                  parseInt(document.getElementById('count').value),
+      passageCount:           parseInt(document.getElementById('passageCount').value),
+      questionsPerPassage:    parseInt(document.getElementById('questionsPerPassage').value),
+      subject:                document.getElementById('subject').value.trim(),
+      sourceText:             document.getElementById('sourceText').value,
+      additionalInstructions: document.getElementById('extra').value.trim(),
+    };
+    if (!config.apiKey) {
+      document.getElementById('statusArea').innerHTML = '<div class="status-err">❌ Gemini APIキーを入力してください。</div>';
+      return;
+    }
+    var btn = document.getElementById('genBtn');
+    btn.disabled = true;
+    btn.textContent = '⏳ 生成中... しばらくお待ちください';
+    document.getElementById('statusArea').innerHTML = '';
+
+    google.script.run
+      .withSuccessHandler(function(json) {
+        var r = JSON.parse(json);
+        btn.disabled = false;
+        btn.textContent = '⚡ 生成する';
+        document.getElementById('statusArea').innerHTML =
+          '<div class="status-ok">✅ ' + r.count + ' 件を生成してシートに保存しました！</div>';
+      })
+      .withFailureHandler(function(err) {
+        btn.disabled = false;
+        btn.textContent = '⚡ 生成する';
+        document.getElementById('statusArea').innerHTML =
+          '<div class="status-err">❌ ' + (err.message || err) + '</div>';
+      })
+      .serverGenerateFromGAS(JSON.stringify(config));
+  }
+</script>
+</body>
+</html>

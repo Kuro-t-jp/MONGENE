@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <meta charset="utf-8">
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{font-family:-apple-system,'Segoe UI',sans-serif;background:#0f0f17;color:#e2e8f0;font-size:13px;display:flex;flex-direction:column;height:100vh;overflow:hidden}
+    .toolbar{background:#1a1a2e;border-bottom:1px solid #2d2d4e;padding:10px 14px;display:flex;align-items:center;gap:10px;flex-shrink:0}
+    .toolbar input[type=text]{background:#0f0f17;color:#e2e8f0;border:1px solid #2d2d4e;border-radius:6px;padding:6px 10px;font-size:13px;width:220px;outline:none}
+    .toolbar input[type=text]:focus{border-color:#6d28d9}
+    select{background:#0f0f17;color:#e2e8f0;border:1px solid #2d2d4e;border-radius:6px;padding:6px 8px;font-size:12px;cursor:pointer;outline:none}
+    select option{background:#1a1a2e}
+    .stat{color:#94a3b8;font-size:12px;margin-left:auto}
+    .stat b{color:#a78bfa}
+    .table-wrap{flex:1;overflow-y:auto}
+    table{width:100%;border-collapse:collapse}
+    thead{position:sticky;top:0;z-index:10}
+    th{background:#1a1a2e;padding:9px 10px;text-align:left;font-size:11px;font-weight:700;color:#a78bfa;text-transform:uppercase;letter-spacing:.05em;border-bottom:1px solid #2d2d4e;white-space:nowrap}
+    td{padding:8px 10px;border-bottom:1px solid #1e1e35;vertical-align:top;font-size:12px}
+    tr:hover td{background:#1a1a2e}
+    .badge{display:inline-block;padding:2px 8px;border-radius:12px;font-size:10px;font-weight:700}
+    .badge-type{background:#1e1b4b;color:#a78bfa}
+    .badge-level{background:#14532d;color:#6ee7b7}
+    .badge-checked{background:#92400e;color:#fcd34d}
+    .content-cell{max-width:320px;line-height:1.5;color:#cbd5e1}
+    .ans-cell{color:#6ee7b7;font-size:11px;max-width:100px;word-break:break-all}
+    .action-btn{padding:4px 10px;border:none;border-radius:5px;cursor:pointer;font-size:11px;font-weight:600}
+    .btn-toggle{background:#374151;color:#e2e8f0}
+    .btn-toggle:hover{background:#4b5563}
+    .btn-toggle.checked{background:#92400e;color:#fcd34d}
+    .btn-del{background:#450a0a;color:#fca5a5;margin-left:4px}
+    .btn-del:hover{background:#7f1d1d}
+    .empty{text-align:center;padding:60px 20px;color:#4b5563}
+    .loading{text-align:center;padding:60px 20px;color:#6d28d9;font-size:15px}
+    .tag-row{display:flex;flex-wrap:wrap;gap:3px;margin-top:4px}
+    .tag{background:#1e1b4b;color:#818cf8;padding:1px 6px;border-radius:10px;font-size:10px}
+  </style>
+</head>
+<body>
+  <div class="toolbar">
+    <input type="text" id="search" placeholder="🔍 問題文で検索..." oninput="render()">
+    <select id="filterType" onchange="render()">
+      <option value="">すべての形式</option>
+      <option value="multiple_choice_4">4択</option>
+      <option value="multiple_choice_5">5択</option>
+      <option value="true_false">正誤</option>
+      <option value="fill_in_blank">穴埋め</option>
+      <option value="short_answer">短答</option>
+      <option value="essay">論述</option>
+    </select>
+    <select id="filterLevel" onchange="render()">
+      <option value="">すべての難易度</option>
+      <option value="high_exam">高校入試</option>
+      <option value="center_exam">共通テスト</option>
+      <option value="university_exam">大学入試 二次</option>
+    </select>
+    <select id="filterChecked" onchange="render()">
+      <option value="">すべて</option>
+      <option value="checked">チェック済みのみ</option>
+      <option value="unchecked">未チェックのみ</option>
+    </select>
+    <div class="stat">表示: <b id="visCount">0</b> / 全 <b id="totalCount">0</b> 件</div>
+  </div>
+
+  <div class="table-wrap">
+    <div class="loading" id="loading">⏳ 読み込み中...</div>
+    <table id="tbl" style="display:none">
+      <thead>
+        <tr>
+          <th style="width:36px">#</th>
+          <th>問題文</th>
+          <th style="width:70px">形式</th>
+          <th style="width:85px">難易度</th>
+          <th style="width:80px">科目</th>
+          <th style="width:110px">正解</th>
+          <th style="width:110px">操作</th>
+        </tr>
+      </thead>
+      <tbody id="tbody"></tbody>
+    </table>
+    <div class="empty" id="empty" style="display:none">条件に一致する問題がありません。</div>
+  </div>
+
+<script>
+  var allQuestions = [];
+  var TYPE_LABELS  = { multiple_choice_4:'4択', multiple_choice_5:'5択', true_false:'正誤',
+                       fill_in_blank:'穴埋め', short_answer:'短答', essay:'論述' };
+  var LEVEL_LABELS = { high_exam:'高校入試', center_exam:'共通テスト', university_exam:'大学二次', custom:'カスタム' };
+
+  google.script.run
+    .withSuccessHandler(function(json) {
+      allQuestions = JSON.parse(json);
+      document.getElementById('loading').style.display = 'none';
+      document.getElementById('tbl').style.display = '';
+      document.getElementById('totalCount').textContent = allQuestions.length;
+      render();
+    })
+    .withFailureHandler(function(err) {
+      document.getElementById('loading').textContent = '❌ 読み込みエラー: ' + (err.message || err);
+    })
+    .serverGetAllQuestionsForBrowser();
+
+  function render() {
+    var keyword      = document.getElementById('search').value.toLowerCase();
+    var filterType   = document.getElementById('filterType').value;
+    var filterLevel  = document.getElementById('filterLevel').value;
+    var filterChecked= document.getElementById('filterChecked').value;
+
+    var filtered = allQuestions.filter(function(q) {
+      if (keyword && q.content.toLowerCase().indexOf(keyword) === -1) return false;
+      if (filterType  && q.type  !== filterType)  return false;
+      if (filterLevel && q.level !== filterLevel) return false;
+      if (filterChecked === 'checked'   && !q.checked)  return false;
+      if (filterChecked === 'unchecked' &&  q.checked)  return false;
+      return true;
+    });
+
+    document.getElementById('visCount').textContent = filtered.length;
+
+    var tbody = document.getElementById('tbody');
+    tbody.innerHTML = '';
+    if (filtered.length === 0) {
+      document.getElementById('tbl').style.display   = 'none';
+      document.getElementById('empty').style.display = '';
+      return;
+    }
+    document.getElementById('tbl').style.display   = '';
+    document.getElementById('empty').style.display = 'none';
+
+    filtered.slice(0, 200).forEach(function(q, i) {
+      var tr = document.createElement('tr');
+      tr.id = 'row-' + q.id;
+      var typeLabel  = TYPE_LABELS[q.type]   || q.type   || '-';
+      var levelLabel = LEVEL_LABELS[q.level] || q.level  || '-';
+
+      tr.innerHTML =
+        '<td style="color:#475569;font-size:11px">' + (i+1) + '</td>' +
+        '<td class="content-cell">' + esc(q.content) + '</td>' +
+        '<td><span class="badge badge-type">'  + esc(typeLabel)  + '</span></td>' +
+        '<td><span class="badge badge-level">' + esc(levelLabel) + '</span></td>' +
+        '<td>' + esc(q.subject||'-') + '</td>' +
+        '<td class="ans-cell">' + esc(q.correctAnswer||'-') + '</td>' +
+        '<td>' +
+          '<button class="action-btn btn-toggle' + (q.checked?' checked':'') + '" ' +
+            'onclick="toggleQ(\'' + q.id + '\')" title="チェック切り替え">' +
+            (q.checked ? '✅ 済' : '☐ 未') +
+          '</button>' +
+          '<button class="action-btn btn-del" onclick="deleteQ(\'' + q.id + '\')" title="削除">🗑</button>' +
+        '</td>';
+      tbody.appendChild(tr);
+    });
+  }
+
+  function toggleQ(id) {
+    var q = allQuestions.find(function(x){return x.id===id;});
+    if (!q) return;
+    google.script.run
+      .withSuccessHandler(function() {
+        q.checked = !q.checked;
+        render();
+      })
+      .withFailureHandler(function(err){ alert('エラー: '+(err.message||err)); })
+      .serverToggleQuestionById(id);
+  }
+
+  function deleteQ(id) {
+    if (!confirm('この問題を削除しますか？')) return;
+    google.script.run
+      .withSuccessHandler(function() {
+        allQuestions = allQuestions.filter(function(x){return x.id!==id;});
+        document.getElementById('totalCount').textContent = allQuestions.length;
+        render();
+      })
+      .withFailureHandler(function(err){ alert('エラー: '+(err.message||err)); })
+      .serverDeleteQuestionById(id);
+  }
+
+  function esc(s) {
+    return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+</script>
+</body>
+</html>
