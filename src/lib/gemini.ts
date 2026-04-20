@@ -3,6 +3,30 @@ import { v4 as uuidv4 } from 'uuid'
 import type { Question, PassageSet, GenerationConfig, ExamLevel, QuestionType } from '../types'
 import { buildGenerationPrompt, buildPassagePrompt } from './prompts'
 
+// ─── リトライ付き generateContent ──────────────────────────────────────────
+async function generateWithRetry(
+  model: ReturnType<InstanceType<typeof GoogleGenerativeAI>['getGenerativeModel']>,
+  prompt: Parameters<typeof model.generateContent>[0],
+  maxRetries = 4,
+  onProgress?: (msg: string) => void
+) {
+  let lastError: unknown
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      return await model.generateContent(prompt)
+    } catch (err: any) {
+      const msg: string = err?.message ?? ''
+      const is503 = msg.includes('503') || msg.includes('high demand') || msg.includes('overloaded')
+      if (!is503 || attempt === maxRetries - 1) throw err
+      const wait = Math.round((2 ** attempt) * 3000 + Math.random() * 1000)
+      onProgress?.(`⏳ モデルが混雑中。${Math.round(wait / 1000)}秒後に再試行... (${attempt + 1}/${maxRetries - 1})`)
+      await new Promise((r) => setTimeout(r, wait))
+      lastError = err
+    }
+  }
+  throw lastError
+}
+
 // ─── JSON抽出ヘルパー ────────────────────────────────────────────────────
 function extractJSON(text: string): unknown {
   // 1. そのままparseを試みる
@@ -80,12 +104,13 @@ export async function extractTextFromImage(
   const base64 = uint8ToBase64(new Uint8Array(arrayBuffer))
   const mimeType = (file.type || 'image/jpeg') as 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif' | 'image/heic' | 'image/heif'
 
-  const result = await model.generateContent([
-    {
-      inlineData: { data: base64, mimeType },
-    },
-    'この画像に写っているすべてのテキスト・数式・図の説明・表の内容を日本語で詳細に抽出してください。学習資料として問題生成に使用します。図や表がある場合は内容を文章で説明してください。',
-  ])
+  const result = await generateWithRetry(
+    model,
+    [
+      { inlineData: { data: base64, mimeType } },
+      'この画像に写っているすべてのテキスト・数式・図の説明・表の内容を日本語で詳細に抽出してください。学習資料として問題生成に使用します。図や表がある場合は内容を文章で説明してください。',
+    ]
+  )
 
   return result.response.text()
 }
@@ -117,7 +142,7 @@ export async function generateQuestions(
 
   onProgress?.('AIが問題を生成中...')
 
-  const result = await model.generateContent(prompt)
+  const result = await generateWithRetry(model, prompt, 4, onProgress)
   const text = result.response.text()
   const finishReason = result.response.candidates?.[0]?.finishReason
 
@@ -184,7 +209,7 @@ export async function generatePassageSets(
 
   onProgress?.('AIが長文問題を生成中...')
 
-  const result = await model.generateContent(prompt)
+  const result = await generateWithRetry(model, prompt, 4, onProgress)
   const text = result.response.text()
   const finishReason = result.response.candidates?.[0]?.finishReason
 

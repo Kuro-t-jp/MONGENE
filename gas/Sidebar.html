@@ -1,0 +1,523 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <meta charset="utf-8">
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{font-family:-apple-system,'Segoe UI',sans-serif;background:#0f0f17;color:#e2e8f0;font-size:13px;overflow-y:auto}
+    .logo{padding:14px 14px 10px;border-bottom:1px solid #2d2d4e}
+    .logo-text{font-size:17px;font-weight:800;letter-spacing:-.5px;background:linear-gradient(135deg,#6366f1,#8b5cf6);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+    .logo-sub{font-size:10px;color:#64748b;margin-top:1px}
+    .section{border-bottom:1px solid #2d2d4e}
+    .sec-head{display:flex;align-items:center;gap:7px;padding:9px 14px;cursor:pointer;user-select:none}
+    .sec-head:hover{background:rgba(255,255,255,.03)}
+    .sec-title{flex:1;font-size:11px;font-weight:700;letter-spacing:.04em;color:#94a3b8}
+    .sec-arrow{font-size:9px;color:#475569;transition:transform .15s}
+    .sec-arrow.open{transform:rotate(180deg)}
+    .sec-body{padding:0 12px 12px;display:flex;flex-direction:column;gap:8px}
+    /* inputs */
+    lbl{display:block;font-size:10px;font-weight:700;color:#7c3aed;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px}
+    input[type=text],input[type=password],select,textarea{width:100%;background:#0f0f17;color:#e2e8f0;border:1px solid #2d2d4e;border-radius:6px;padding:6px 9px;font-size:12px;outline:none;font-family:inherit}
+    input:focus,select:focus,textarea:focus{border-color:#6d28d9}
+    textarea{resize:vertical}
+    select option{background:#1a1a2e}
+    /* toggles */
+    .toggle-group{display:flex;gap:5px}
+    .toggle{flex:1;padding:6px 4px;background:#0f0f17;color:#94a3b8;border:1px solid #2d2d4e;border-radius:7px;cursor:pointer;font-size:11px;font-weight:600;text-align:center}
+    .toggle.active{background:linear-gradient(135deg,#4f46e5,#7c3aed);color:#fff;border-color:transparent}
+    /* chips */
+    .chips{display:flex;flex-wrap:wrap;gap:4px}
+    .chip{padding:4px 10px;background:#0f0f17;color:#94a3b8;border:1px solid #2d2d4e;border-radius:16px;cursor:pointer;font-size:11px}
+    .chip.active{background:#4f46e5;color:#fff;border-color:#4f46e5}
+    input[type=range]{width:100%;accent-color:#6d28d9;margin-top:3px}
+    /* buttons */
+    .gen-btn{width:100%;padding:11px;background:linear-gradient(135deg,#4f46e5,#7c3aed);color:#fff;border:none;border-radius:9px;font-size:13px;font-weight:700;cursor:pointer;transition:opacity .15s;display:flex;align-items:center;justify-content:center;gap:7px}
+    .gen-btn:hover{opacity:.9}
+    .gen-btn:disabled{opacity:.45;cursor:not-allowed}
+    .sub-btn{width:100%;padding:8px 10px;border-radius:7px;border:1px solid #2d2d4e;background:#1e1e30;color:#c4b5fd;cursor:pointer;font-size:11px;font-weight:600;text-align:left;display:flex;align-items:center;gap:6px;transition:all .12s}
+    .sub-btn:hover{background:#252540}
+    .sub-btn.danger{background:#1a0a0a;border-color:#7f1d1d;color:#fca5a5}
+    .sub-btn.danger:hover{background:#2a0f0f}
+    /* stat */
+    .stat-grid{display:grid;grid-template-columns:1fr 1fr;gap:5px}
+    .stat-card{background:#1a1a2e;border:1px solid #2d2d4e;border-radius:7px;padding:8px;text-align:center}
+    .stat-num{font-size:20px;font-weight:800;color:#818cf8}
+    .stat-label{font-size:10px;color:#64748b;margin-top:1px}
+    /* status */
+    .status-ok{background:#064e3b;color:#6ee7b7;border:1px solid #065f46;border-radius:7px;padding:8px 10px;font-size:11px}
+    .status-err{background:#450a0a;color:#fca5a5;border:1px solid #7f1d1d;border-radius:7px;padding:8px 10px;font-size:11px}
+    .count-val{font-weight:700;color:#a78bfa}
+    .hidden{display:none}
+    .field{display:flex;flex-direction:column;gap:3px}
+    .row{display:flex;gap:6px;align-items:center}
+    .row input{flex:1}
+    .save-sm{background:#374151;color:#e2e8f0;border:none;border-radius:5px;padding:5px 10px;cursor:pointer;font-size:11px;white-space:nowrap}
+    .save-sm:hover{background:#4b5563}
+    .divider{border:none;border-top:1px solid #2d2d4e}
+    .spinner{width:13px;height:13px;border:2px solid rgba(255,255,255,.3);border-top-color:#fff;border-radius:50%;animation:spin .7s linear infinite}
+    @keyframes spin{to{transform:rotate(360deg)}}
+    /* file upload */
+    .upload-zone{border:1.5px dashed #3d3d60;border-radius:8px;padding:10px 12px;text-align:center;cursor:pointer;transition:border-color .15s,background .15s}
+    .upload-zone:hover,.upload-zone.dragover{border-color:#6d28d9;background:rgba(109,40,217,.07)}
+    .upload-zone-text{font-size:11px;color:#64748b}
+    .upload-zone-text b{color:#a78bfa}
+    .upload-progress{font-size:10px;color:#a78bfa;margin-top:5px;min-height:14px}
+    .file-list{display:flex;flex-direction:column;gap:3px;margin-top:4px}
+    .file-item{display:flex;align-items:center;gap:5px;background:#1a1a2e;border-radius:5px;padding:3px 7px;font-size:10px;color:#94a3b8}
+    .file-item-name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .file-item-rm{cursor:pointer;color:#64748b;font-size:12px;line-height:1;padding:0 2px}
+    .file-item-rm:hover{color:#fca5a5}
+    /* notebooklm */
+    .nlm-row{display:flex;gap:5px}
+    .nlm-row input{flex:1;font-size:11px}
+    .nlm-open-btn{padding:6px 10px;background:#1e293b;color:#818cf8;border:1px solid #334155;border-radius:6px;cursor:pointer;font-size:11px;white-space:nowrap;transition:background .12s}
+    .nlm-open-btn:hover{background:#273549}
+  </style>
+</head>
+<body>
+
+  <!-- ロゴ -->
+  <div class="logo">
+    <div class="logo-text">MONGENE</div>
+    <div class="logo-sub">問題生成システム</div>
+  </div>
+
+  <!-- ══ 📂 資料を入力 ════════════════════════════ -->
+  <div class="section">
+    <div class="sec-head" onclick="toggleSection('source')">
+      <span>📂</span>
+      <span class="sec-title">資料を入力</span>
+      <span class="sec-arrow open" id="arrow-source">▼</span>
+    </div>
+    <div class="sec-body" id="body-source">
+      <div class="field">
+        <lbl>教科書・資料のテキストを貼り付け</lbl>
+        <textarea id="sourceText" rows="6" placeholder="ここに資料のテキストを貼り付けてください。&#10;&#10;例：教科書の本文、資料集のテキスト、授業ノートなど。&#10;貼り付けた内容をもとに問題が生成されます。"></textarea>
+      </div>
+
+      <!-- ファイル読み込み -->
+      <div class="field">
+        <lbl>ファイルから読み込み（JPEG / PNG / PDF / TXT）</lbl>
+        <div class="upload-zone" id="uploadZone" onclick="document.getElementById('fileInput').click()"
+             ondragover="onDragOver(event)" ondragleave="onDragLeave(event)" ondrop="onDrop(event)">
+          <input type="file" id="fileInput" multiple accept="image/jpeg,image/png,image/gif,image/webp,application/pdf,text/plain,.txt,.jpg,.jpeg,.png,.pdf"
+                 style="display:none" onchange="handleFiles(this.files)">
+          <div class="upload-zone-text">クリックまたはドラッグ＆ドロップ<br><b>JPEG / PNG / PDF / TXT</b> 対応</div>
+        </div>
+        <div class="upload-progress" id="uploadProgress"></div>
+        <div class="file-list" id="fileList"></div>
+      </div>
+
+      <!-- NotebookLM -->
+      <div class="field">
+        <lbl>NotebookLM から読み込み</lbl>
+        <div class="nlm-row">
+          <input type="text" id="nlmUrl" placeholder="NotebookLM の URL を貼り付け">
+          <button class="nlm-open-btn" onclick="openNotebookLM()">🔗 開く</button>
+        </div>
+        <div style="font-size:10px;color:#475569;margin-top:4px">
+          URLを開いてノートの内容をコピーし、上のテキストエリアに貼り付けてください
+        </div>
+      </div>
+      <div class="field">
+        <lbl>科目・分野（任意）</lbl>
+        <input type="text" id="subject" placeholder="例：生物基礎、日本史、英文法">
+      </div>
+      <div class="field">
+        <lbl>追加指示（任意）</lbl>
+        <input type="text" id="extra" placeholder="例：図表に関する問題を含めて">
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ ⚡ 生成設定 ════════════════════════════════ -->
+  <div class="section">
+    <div class="sec-head" onclick="toggleSection('gen')">
+      <span>⚡</span>
+      <span class="sec-title">生成設定</span>
+      <span class="sec-arrow open" id="arrow-gen">▼</span>
+    </div>
+    <div class="sec-body" id="body-gen">
+
+      <!-- モード -->
+      <div class="field">
+        <lbl>生成モード</lbl>
+        <div class="toggle-group">
+          <button class="toggle active" id="modeInd" onclick="setMode('individual')">📝 一問一答</button>
+          <button class="toggle"        id="modePas" onclick="setMode('passage')">📖 長文問題</button>
+        </div>
+      </div>
+
+      <!-- 難易度 -->
+      <div class="field">
+        <lbl>難易度</lbl>
+        <div class="chips" id="level-chips">
+          <button class="chip active" data-val="high_exam"       onclick="setChip(this,'level')">高校入試</button>
+          <button class="chip"        data-val="center_exam"     onclick="setChip(this,'level')">共通テスト</button>
+          <button class="chip"        data-val="university_exam" onclick="setChip(this,'level')">大学二次</button>
+          <button class="chip"        data-val="custom"          onclick="setChip(this,'level')">カスタム</button>
+        </div>
+        <input type="text" id="customLevel" class="hidden" placeholder="カスタム難易度を入力" style="margin-top:5px">
+      </div>
+
+      <!-- 問題形式 -->
+      <div class="field" id="typeField">
+        <lbl>問題形式</lbl>
+        <div class="chips">
+          <button class="chip active" data-val="multiple_choice_4" onclick="setChip(this,'type')">4択</button>
+          <button class="chip"        data-val="multiple_choice_5" onclick="setChip(this,'type')">5択</button>
+          <button class="chip"        data-val="true_false"        onclick="setChip(this,'type')">正誤</button>
+          <button class="chip"        data-val="fill_in_blank"     onclick="setChip(this,'type')">穴埋め</button>
+          <button class="chip"        data-val="short_answer"      onclick="setChip(this,'type')">短答</button>
+          <button class="chip"        data-val="essay"             onclick="setChip(this,'type')">論述</button>
+        </div>
+      </div>
+
+      <!-- 問題数（一問一答） -->
+      <div class="field" id="indCountField">
+        <lbl>問題数：<span class="count-val" id="countVal">5</span> 問</lbl>
+        <input type="range" id="count" min="1" max="20" value="5" oninput="document.getElementById('countVal').textContent=this.value">
+      </div>
+
+      <!-- セット数（長文） -->
+      <div class="field hidden" id="pasCountField">
+        <lbl>セット数：<span class="count-val" id="passageCountVal">2</span></lbl>
+        <input type="range" id="passageCount" min="1" max="5" value="2" oninput="document.getElementById('passageCountVal').textContent=this.value">
+        <lbl style="margin-top:6px">設問数/セット：<span class="count-val" id="qpsVal">5</span></lbl>
+        <input type="range" id="questionsPerPassage" min="2" max="10" value="5" oninput="document.getElementById('qpsVal').textContent=this.value">
+      </div>
+
+      <!-- モデル -->
+      <div class="field">
+        <lbl>AIモデル</lbl>
+        <select id="model">
+          <option value="gemini-3.1-flash-lite-preview" selected>Gemini 3.1 Flash-Lite（推奨）</option>
+          <option value="gemini-2.5-flash-preview-04-17">Gemini 2.5 Flash（高精度）</option>
+          <option value="gemini-2.5-flash-lite">Gemini 2.5 Flash-Lite</option>
+          <option value="gemini-1.5-pro">Gemini 1.5 Pro（最高精度）</option>
+        </select>
+      </div>
+
+      <!-- ステータス -->
+      <div id="statusArea"></div>
+
+      <!-- 生成ボタン -->
+      <button class="gen-btn" id="genBtn" onclick="generate()">
+        <span>⚡</span><span>シートに問題を生成する</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- ══ 📊 統計 ═══════════════════════════════════ -->
+  <div class="section">
+    <div class="sec-head" onclick="toggleSection('stats')">
+      <span>📊</span>
+      <span class="sec-title">データ統計</span>
+      <button onclick="event.stopPropagation();loadStats()" style="background:none;border:none;color:#64748b;cursor:pointer;font-size:13px;margin-left:auto;padding:2px 5px" title="更新">↺</button>
+      <span class="sec-arrow open" id="arrow-stats">▼</span>
+    </div>
+    <div class="sec-body" id="body-stats">
+      <div class="stat-grid">
+        <div class="stat-card">
+          <div class="stat-num" id="stat-q">-</div>
+          <div class="stat-label">📝 一問一答</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-num" id="stat-p">-</div>
+          <div class="stat-label">📖 長文セット</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ 🔧 ツール ══════════════════════════════════ -->
+  <div class="section">
+    <div class="sec-head" onclick="toggleSection('tools')">
+      <span>🔧</span>
+      <span class="sec-title">ツール・管理</span>
+      <span class="sec-arrow" id="arrow-tools">▼</span>
+    </div>
+    <div class="sec-body hidden" id="body-tools">
+      <button class="sub-btn" onclick="google.script.run.menuBrowseQuestions()">
+        <span>📋</span><span>問題を閲覧・管理</span>
+      </button>
+      <button class="sub-btn" onclick="google.script.run.menuExportToForms()">
+        <span>📝</span><span>Google Formsへ書き出す</span>
+      </button>
+      <button class="sub-btn" onclick="google.script.run.menuExportToCsv()">
+        <span>📊</span><span>CSV書き出し</span>
+      </button>
+      <hr class="divider">
+      <button class="sub-btn danger" onclick="confirmDeleteChecked()">
+        <span>✅</span><span>チェック済みを削除</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- ══ 🔑 APIキー ═════════════════════════════════ -->
+  <div class="section">
+    <div class="sec-head" onclick="toggleSection('apikey')">
+      <span>🔑</span>
+      <span class="sec-title">APIキー設定</span>
+      <span class="sec-arrow" id="arrow-apikey">▼</span>
+    </div>
+    <div class="sec-body hidden" id="body-apikey">
+      <div class="field">
+        <lbl>Gemini API キー</lbl>
+        <div class="row">
+          <input type="password" id="api-key-input" placeholder="AIzaSy...">
+          <button class="save-sm" onclick="saveApiKey()">保存</button>
+        </div>
+        <div id="api-msg" style="font-size:11px;margin-top:3px"></div>
+      </div>
+    </div>
+  </div>
+
+  <div style="padding:8px 14px;font-size:10px;color:#374151;border-top:1px solid #2d2d4e">
+    MONGENE v0.1.0
+  </div>
+
+<script>
+  var selLevel = 'high_exam';
+  var selType  = 'multiple_choice_4';
+  var selMode  = 'individual';
+
+  // ── 初期化 ────────────────────────────────────────────
+  google.script.run
+    .withSuccessHandler(function(k) {
+      if (k) document.getElementById('api-key-input').placeholder = '設定済み（変更時のみ入力）';
+    })
+    .serverGetApiKey();
+  loadStats();
+
+  // ── セクション開閉 ────────────────────────────────────
+  function toggleSection(id) {
+    var body  = document.getElementById('body-' + id);
+    var arrow = document.getElementById('arrow-' + id);
+    var isOpen = !body.classList.contains('hidden');
+    body.classList.toggle('hidden', isOpen);
+    arrow.classList.toggle('open', !isOpen);
+  }
+
+  // ── 統計 ──────────────────────────────────────────────
+  function loadStats() {
+    document.getElementById('stat-q').textContent = '…';
+    document.getElementById('stat-p').textContent = '…';
+    google.script.run
+      .withSuccessHandler(function(json) {
+        var d = JSON.parse(json);
+        document.getElementById('stat-q').textContent = d.questions;
+        document.getElementById('stat-p').textContent = d.passageSets;
+      })
+      .withFailureHandler(function() {
+        document.getElementById('stat-q').textContent = '!';
+        document.getElementById('stat-p').textContent = '!';
+      })
+      .serverGetStats();
+  }
+
+  // ── APIキー保存 ───────────────────────────────────────
+  function saveApiKey() {
+    var key = document.getElementById('api-key-input').value.trim();
+    if (!key) return;
+    google.script.run
+      .withSuccessHandler(function() {
+        document.getElementById('api-key-input').value = '';
+        document.getElementById('api-key-input').placeholder = '設定済み（変更時のみ入力）';
+        document.getElementById('api-msg').textContent = '✅ 保存しました';
+        setTimeout(function(){ document.getElementById('api-msg').textContent=''; }, 2500);
+      })
+      .serverSetApiKey(key);
+  }
+
+  // ── モード切替 ────────────────────────────────────────
+  function setMode(m) {
+    selMode = m;
+    document.getElementById('modeInd').className = 'toggle' + (m === 'individual' ? ' active' : '');
+    document.getElementById('modePas').className = 'toggle' + (m === 'passage'    ? ' active' : '');
+    document.getElementById('indCountField').className = 'field' + (m === 'individual' ? '' : ' hidden');
+    document.getElementById('pasCountField').className = 'field' + (m === 'passage'    ? '' : ' hidden');
+    document.getElementById('typeField').style.opacity = m === 'passage' ? '.45' : '1';
+  }
+
+  // ── チップ選択 ────────────────────────────────────────
+  function setChip(btn, group) {
+    btn.parentElement.querySelectorAll('.chip').forEach(function(c){ c.classList.remove('active'); });
+    btn.classList.add('active');
+    if (group === 'level') {
+      selLevel = btn.dataset.val;
+      document.getElementById('customLevel').className = selLevel === 'custom' ? '' : 'hidden';
+    } else {
+      selType = btn.dataset.val;
+    }
+  }
+
+  // ── 生成 ──────────────────────────────────────────────
+  function generate() {
+    var config = {
+      apiKey:                 document.getElementById('api-key-input').value.trim(),
+      model:                  document.getElementById('model').value,
+      generationMode:         selMode,
+      level:                  selLevel,
+      customLevel:            document.getElementById('customLevel').value,
+      questionType:           selType,
+      count:                  parseInt(document.getElementById('count').value),
+      passageCount:           parseInt(document.getElementById('passageCount').value),
+      questionsPerPassage:    parseInt(document.getElementById('questionsPerPassage').value),
+      subject:                document.getElementById('subject').value.trim(),
+      sourceText:             document.getElementById('sourceText').value.trim(),
+      notebookLmUrl:          document.getElementById('nlmUrl').value.trim(),
+      additionalInstructions: document.getElementById('extra').value.trim(),
+    };
+
+    var sa = document.getElementById('statusArea');
+
+    if (!config.apiKey) {
+      // APIキー未入力 → APIキーセクションを開いて案内
+      var b = document.getElementById('body-apikey');
+      var a = document.getElementById('arrow-apikey');
+      b.classList.remove('hidden');
+      a.classList.add('open');
+      sa.innerHTML = '<div class="status-err">❌ 🔑 APIキーを設定してください（下の「APIキー設定」セクションで入力・保存）</div>';
+      return;
+    }
+    if (!config.sourceText && !config.notebookLmUrl && !config.subject) {
+      sa.innerHTML = '<div class="status-err">⚠️ 資料テキスト・NotebookLM URL・科目のいずれかを入力してください</div>';
+      return;
+    }
+
+    var btn = document.getElementById('genBtn');
+    btn.disabled = true;
+    btn.innerHTML = '<div class="spinner"></div><span>生成中... しばらくお待ちください</span>';
+    sa.innerHTML = '';
+
+    google.script.run
+      .withSuccessHandler(function(json) {
+        var r = JSON.parse(json);
+        btn.disabled = false;
+        btn.innerHTML = '<span>⚡</span><span>シートに問題を生成する</span>';
+        sa.innerHTML = '<div class="status-ok">✅ ' + r.count + ' 件生成してシートに保存しました！</div>';
+        loadStats();
+      })
+      .withFailureHandler(function(err) {
+        btn.disabled = false;
+        btn.innerHTML = '<span>⚡</span><span>シートに問題を生成する</span>';
+        sa.innerHTML = '<div class="status-err">❌ ' + (err.message || err) + '</div>';
+      })
+      .serverGenerateFromGAS(JSON.stringify(config));
+  }
+
+  // ── チェック済み削除 ──────────────────────────────────
+  function confirmDeleteChecked() {
+    if (!confirm('チェック済み問題を全て削除しますか？')) return;
+    google.script.run
+      .withSuccessHandler(function() { loadStats(); })
+      .menuDeleteChecked();
+  }
+
+  // ── ファイル読み込み ───────────────────────────────────
+  var pendingFiles = []; // { name, mimeType, base64 }
+
+  function onDragOver(e) {
+    e.preventDefault();
+    document.getElementById('uploadZone').classList.add('dragover');
+  }
+  function onDragLeave(e) {
+    document.getElementById('uploadZone').classList.remove('dragover');
+  }
+  function onDrop(e) {
+    e.preventDefault();
+    document.getElementById('uploadZone').classList.remove('dragover');
+    handleFiles(e.dataTransfer.files);
+  }
+
+  function handleFiles(files) {
+    if (!files || files.length === 0) return;
+    var prog = document.getElementById('uploadProgress');
+    var allowed = ['image/jpeg','image/png','image/gif','image/webp','application/pdf','text/plain'];
+    Array.prototype.forEach.call(files, function(file) {
+      if (!allowed.some(function(t){ return file.type === t || (t === 'text/plain' && /\.(txt)$/i.test(file.name)); })) {
+        prog.textContent = '⚠️ ' + file.name + ' は非対応形式です（JPEG/PNG/PDF/TXT のみ）';
+        return;
+      }
+      prog.textContent = '📂 ' + file.name + ' を読み込み中…';
+      var reader = new FileReader();
+      reader.onload = function(ev) {
+        var dataUrl = ev.target.result;
+        // data:[mime];base64,[data] → base64 部分だけ取り出す
+        var base64 = dataUrl.split(',')[1];
+        var mime   = file.type || 'text/plain';
+
+        if (mime === 'text/plain' || /\.(txt)$/i.test(file.name)) {
+          // テキストは直接デコードして追記
+          try {
+            var text = decodeURIComponent(escape(atob(base64)));
+            appendToSourceText(text, file.name);
+            prog.textContent = '✅ ' + file.name + ' を読み込みました';
+          } catch(e) {
+            prog.textContent = '❌ テキスト読み込み失敗: ' + e.message;
+          }
+          return;
+        }
+
+        // 画像・PDF → GAS サーバーで OCR
+        prog.textContent = '🔍 ' + file.name + ' からテキスト抽出中（Gemini OCR）…';
+        google.script.run
+          .withSuccessHandler(function(text) {
+            appendToSourceText(text, file.name);
+            prog.textContent = '✅ ' + file.name + ' のテキスト抽出完了';
+          })
+          .withFailureHandler(function(err) {
+            prog.textContent = '❌ OCR 失敗（' + file.name + '）: ' + (err.message || err);
+          })
+          .serverExtractTextFromFile(base64, mime, file.name);
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+
+  function appendToSourceText(text, label) {
+    var ta = document.getElementById('sourceText');
+    var sep = ta.value ? '\n\n--- ' + label + ' ---\n' : '';
+    ta.value += sep + text.trim();
+    // 追加ファイルをリストに表示
+    var li = document.createElement('div');
+    li.className = 'file-item';
+    li.innerHTML = '<span class="file-item-name">📄 ' + label + '</span>' +
+      '<span class="file-item-rm" onclick="removeFileItem(this, ' + JSON.stringify(label) + ')">✕</span>';
+    document.getElementById('fileList').appendChild(li);
+  }
+
+  function removeFileItem(el, label) {
+    // テキストエリアから該当ブロックを削除
+    var ta = document.getElementById('sourceText');
+    var marker = '--- ' + label + ' ---';
+    var idx = ta.value.indexOf(marker);
+    if (idx !== -1) {
+      // マーカー行から次のマーカー（または末尾）まで削除
+      var before = ta.value.substring(0, idx);
+      var after  = ta.value.substring(idx + marker.length);
+      var nextMarker = after.indexOf('\n--- ');
+      if (nextMarker !== -1) {
+        after = after.substring(nextMarker);
+      } else {
+        after = '';
+      }
+      ta.value = before.replace(/\n+$/, '') + after;
+    }
+    el.parentElement.remove();
+  }
+
+  // ── NotebookLM ────────────────────────────────────────
+  function openNotebookLM() {
+    var url = document.getElementById('nlmUrl').value.trim();
+    if (!url) {
+      url = 'https://notebooklm.google.com/';
+    }
+    // GAS サイドバーから外部 URL を開く
+    window.open(url, '_blank');
+  }
+</script>
+</body>
+</html>
