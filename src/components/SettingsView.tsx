@@ -131,6 +131,22 @@ export default function SettingsView() {
           </div>
         </div>
 
+        {/* SEIBUTURAG 連携 */}
+        <div style={card}>
+          <label style={label}>🔬 SEIBUTURAG URL</label>
+          <p style={{ margin: '0 0 10px', fontSize: 12, color: 'var(--color-text-dim)', lineHeight: 1.6 }}>
+            SEIBUTURAG の REST API ベース URL を入力してください。<br />
+            デフォルト: <code style={{ fontFamily: 'monospace' }}>http://localhost:3001</code>
+          </p>
+          <input
+            type="text"
+            placeholder="http://localhost:3001"
+            value={settings.seibuturagBaseUrl ?? 'http://localhost:3001'}
+            onChange={(e) => updateSettings({ seibuturagBaseUrl: e.target.value })}
+            style={input}
+          />
+        </div>
+
         {/* Google 連携 */}
         <div style={card}>
           <label style={label}>🔗 Google Client ID</label>

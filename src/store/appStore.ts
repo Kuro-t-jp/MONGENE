@@ -72,6 +72,7 @@ const defaultSettings: AppSettings = {
   geminiModel: 'gemini-3.1-flash-lite-preview',
   googleClientId: '',
   googleClientSecret: '',
+  seibuturagBaseUrl: 'http://localhost:3001',
 }
 
 export const useAppStore = create<AppState>()(
@@ -150,20 +151,22 @@ export const useAppStore = create<AppState>()(
     }),
     {
       name: 'mongene-v1',
-      version: 4,
+      version: 5,
       migrate: (state: any) => {
         const prevConfig = state.generationConfig ?? {}
         const validStages = ['none', 'high_biology', 'high_biology_basic']
+        const validModes = ['individual', 'passage', 'figure']
         return {
           ...state,
           passageSets: state.passageSets ?? [],
           urlHistory: Array.isArray(state.urlHistory) ? state.urlHistory : [],
           generationConfig: {
-            generationMode: 'individual',
             passageCount: 2,
             questionsPerPassage: 5,
             ...prevConfig,
-            // 無効値や未定義の場合は安全なデフォルトにリセット
+            generationMode: validModes.includes(prevConfig.generationMode)
+              ? prevConfig.generationMode
+              : 'individual',
             curriculumStage: validStages.includes(prevConfig.curriculumStage)
               ? prevConfig.curriculumStage
               : 'none',

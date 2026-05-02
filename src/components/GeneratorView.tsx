@@ -2,7 +2,8 @@ import { useState } from 'react'
 import { useAppStore } from '../store/appStore'
 import { EXAM_LEVEL_CONFIGS, QUESTION_TYPE_CONFIGS, CURRICULUM_STAGE_CONFIGS } from '../types'
 import type { ExamLevel, QuestionType, CurriculumStage } from '../types'
-import { generateQuestions, generatePassageSets } from '../lib/gemini'
+import { generateQuestions, generatePassageSets, generateFigureSets } from '../lib/gemini'
+import { TEMPLATES } from '../lib/templates'
 
 export default function GeneratorView() {
   const dataSources            = useAppStore((s) => s.dataSources)
@@ -20,9 +21,20 @@ export default function GeneratorView() {
 
   const [error,   setError]   = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
+  const [showTemplates, setShowTemplates] = useState(false)
+  const [appliedTemplate, setAppliedTemplate] = useState<string | null>(null)
 
   const selected = dataSources.filter((s) => s.selected)
   const mode = config.generationMode ?? 'individual'
+
+  // ── Template ─────────────────────────────────────────────────────────────
+  const applyTemplate = (templateId: string) => {
+    const tpl = TEMPLATES.find((t) => t.id === templateId)
+    if (!tpl) return
+    updateConfig(tpl.config)
+    setAppliedTemplate(templateId)
+    setShowTemplates(false)
+  }
 
   // ── Toggles ──────────────────────────────────────────────────────────────
   const toggleLevel = (level: ExamLevel) => {
@@ -61,25 +73,26 @@ export default function GeneratorView() {
 
     setIsGenerating(true)
     try {
+      const srcs = selected.map((s) => ({ name: s.name, content: s.content }))
       if (mode === 'passage') {
         const sets = await generatePassageSets(
-          settings.geminiApiKey,
-          settings.geminiModel,
-          selected.map((s) => ({ name: s.name, content: s.content })),
-          config,
-          setGenerationProgress
+          settings.geminiApiKey, settings.geminiModel, srcs, config, setGenerationProgress
         )
         appendPassageSets(sets)
         const totalQ = sets.reduce((a, s) => a + s.questions.length, 0)
         setSuccess(`${sets.length}セット（計${totalQ}問）の長文問題を生成しました！`)
         setQuestionListTab('passage')
+      } else if (mode === 'figure') {
+        const sets = await generateFigureSets(
+          settings.geminiApiKey, settings.geminiModel, srcs, config, setGenerationProgress
+        )
+        appendPassageSets(sets)
+        const totalQ = sets.reduce((a, s) => a + s.questions.length, 0)
+        setSuccess(`${sets.length}セット（計${totalQ}問）の図解問題を生成しました！`)
+        setQuestionListTab('passage')
       } else {
         const questions = await generateQuestions(
-          settings.geminiApiKey,
-          settings.geminiModel,
-          selected.map((s) => ({ name: s.name, content: s.content })),
-          config,
-          setGenerationProgress
+          settings.geminiApiKey, settings.geminiModel, srcs, config, setGenerationProgress
         )
         appendQuestions(questions)
         setSuccess(`${questions.length}問の問題を生成しました！`)
@@ -129,6 +142,88 @@ export default function GeneratorView() {
           </p>
         </div>
 
+        {/* ── Template Selector ────────────────────────────────────────────── */}
+        <div style={card}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <div>
+              <p style={{ margin: 0, fontSize: 14, fontWeight: 700, color: 'var(--color-text)' }}>
+                テンプレート
+              </p>
+              {appliedTemplate && (() => {
+                const tpl = TEMPLATES.find((t) => t.id === appliedTemplate)
+                return tpl ? (
+                  <p style={{ margin: '3px 0 0', fontSize: 12, color: 'var(--color-text-dim)' }}>
+                    {tpl.emoji} {tpl.name} を適用中
+                  </p>
+                ) : null
+              })()}
+            </div>
+            <button
+              onClick={() => setShowTemplates((v) => !v)}
+              style={{
+                padding: '7px 16px', borderRadius: 20, border: '1px solid var(--color-border)',
+                background: showTemplates ? 'rgba(99,102,241,0.14)' : 'var(--color-surface-3)',
+                color: showTemplates ? 'var(--color-primary-hover)' : 'var(--color-text-muted)',
+                fontSize: 13, fontWeight: 600, cursor: 'pointer', transition: 'all 0.15s',
+              }}
+            >
+              {showTemplates ? '▲ 閉じる' : '▼ テンプレートから選ぶ'}
+            </button>
+          </div>
+
+          {showTemplates && (
+            <div style={{ marginTop: 16, display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 10 }}>
+              {TEMPLATES.map((tpl) => {
+                const active = appliedTemplate === tpl.id
+                return (
+                  <button
+                    key={tpl.id}
+                    onClick={() => applyTemplate(tpl.id)}
+                    style={{
+                      padding: '14px 16px', borderRadius: 12, border: 'none',
+                      cursor: 'pointer', textAlign: 'left', position: 'relative', overflow: 'hidden',
+                      background: active ? tpl.accent : 'var(--color-surface-3)',
+                      outline: active ? `2px solid #fff` : '1px solid var(--color-border)',
+                      outlineOffset: active ? -2 : 0,
+                      transition: 'all 0.15s',
+                      color: active ? '#fff' : 'var(--color-text)',
+                    }}
+                  >
+                    {!active && (
+                      <div
+                        style={{
+                          position: 'absolute', inset: 0, opacity: 0.07,
+                          background: tpl.accent, pointerEvents: 'none',
+                        }}
+                      />
+                    )}
+                    <div style={{ fontSize: 20, marginBottom: 5 }}>{tpl.emoji}</div>
+                    <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 3 }}>{tpl.name}</div>
+                    <div style={{ fontSize: 11, opacity: active ? 0.85 : 0.6, lineHeight: 1.5 }}>
+                      {tpl.description}
+                    </div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 8 }}>
+                      {tpl.tags.map((tag) => (
+                        <span
+                          key={tag}
+                          style={{
+                            fontSize: 10, padding: '2px 8px', borderRadius: 20,
+                            background: active ? 'rgba(255,255,255,0.2)' : 'rgba(99,102,241,0.12)',
+                            color: active ? '#fff' : 'var(--color-primary-hover)',
+                            fontWeight: 600,
+                          }}
+                        >
+                          {tag}
+                        </span>
+                      ))}
+                    </div>
+                  </button>
+                )
+              })}
+            </div>
+          )}
+        </div>
+
         {/* ── Mode Toggle ──────────────────────────────────────────────────── */}
         <div
           style={{
@@ -138,8 +233,9 @@ export default function GeneratorView() {
           }}
         >
           {([
-            { id: 'individual', label: '📝 一問一答モード', desc: '独立した問題を複数生成' },
-            { id: 'passage',    label: '📖 長文問題モード', desc: 'リード文＋複数設問のセットを生成' },
+            { id: 'individual', label: '📝 一問一答', desc: '独立した問題を複数生成' },
+            { id: 'passage',    label: '📖 長文問題', desc: 'リード文＋複数設問のセット' },
+            { id: 'figure',     label: '🔬 図解問題', desc: '図のラベルを参照する設問' },
           ] as const).map((m) => {
             const active = mode === m.id
             return (
@@ -376,7 +472,7 @@ export default function GeneratorView() {
             <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
               <div>
                 <label style={{ ...sectionTitle, display: 'block' }}>
-                  長文セット数：
+                  {mode === 'figure' ? '図解セット数' : '長文セット数'}：
                   <span style={{ color: 'var(--color-primary)' }}>{config.passageCount ?? 2}セット</span>
                 </label>
                 <input

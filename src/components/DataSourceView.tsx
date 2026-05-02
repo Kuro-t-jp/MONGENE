@@ -6,6 +6,13 @@ import { useAppStore } from '../store/appStore'
 import { parseFile, detectFileType } from '../lib/parsers'
 import { extractTextFromImage } from '../lib/gemini'
 import type { DataSource, DataSourceType } from '../types'
+import {
+  listSources,
+  fetchSourceAsText,
+  getSourceImages,
+  imageUrlToBase64,
+} from '../lib/seibuturagClient'
+import type { SeibuturagSource } from '../lib/seibuturagClient'
 
 const ACCEPTED = '.pdf,.docx,.doc,.md,.markdown,.txt,.jpg,.jpeg,.png,.webp,.gif,.heic,.heif,.bmp,.tiff'
 
@@ -49,6 +56,113 @@ export default function DataSourceView() {
   const [urlInput,   setUrlInput]   = useState('')
   const [urlLoading, setUrlLoading] = useState(false)
   const [urlMsg,     setUrlMsg]     = useState<string | null>(null)
+
+  // ── SEIBUTURAG ──────────────────────────────────────────────────────────
+  const [showRag,          setShowRag]          = useState(false)
+  const [ragSources,       setRagSources]       = useState<SeibuturagSource[]>([])
+  const [ragLoading,       setRagLoading]       = useState(false)
+  const [ragImporting,     setRagImporting]     = useState(false)
+  const [ragMsg,           setRagMsg]           = useState<string | null>(null)
+  const [ragChecked,       setRagChecked]       = useState<Set<string>>(new Set())
+  const [ragQuery,         setRagQuery]         = useState('')
+  const [ragImportImages,  setRagImportImages]  = useState(false)
+
+  const ragBaseUrl = settings.seibuturagBaseUrl || 'http://localhost:3001'
+
+  const handleRagConnect = async () => {
+    setRagLoading(true)
+    setRagMsg(null)
+    try {
+      const sources = await listSources(ragBaseUrl)
+      setRagSources(sources.filter((s) => (s.chunkCount ?? 0) > 0))
+      setRagMsg(sources.length === 0 ? '⚠️ ソースが見つかりません' : null)
+    } catch (err) {
+      setRagMsg(`❌ 接続失敗: ${String(err)}`)
+    } finally {
+      setRagLoading(false)
+    }
+  }
+
+  const toggleRagSource = (id: string) => {
+    setRagChecked((prev) => {
+      const next = new Set(prev)
+      next.has(id) ? next.delete(id) : next.add(id)
+      return next
+    })
+  }
+
+  const handleRagImport = async () => {
+    if (ragChecked.size === 0) return
+    setRagImporting(true)
+    setRagMsg('📥 読み込み中...')
+    let imported = 0
+    try {
+      for (const sourceId of ragChecked) {
+        const source = ragSources.find((s) => s.id === sourceId)
+        if (!source) continue
+
+        setRagMsg(`📥 ${source.name} を取得中...`)
+        const text = await fetchSourceAsText(ragBaseUrl, source, ragQuery)
+        if (text.trim()) {
+          addDataSource({
+            id: uuidv4(),
+            type: 'text',
+            name: `[RAG] ${source.name}`,
+            content: text,
+            size: new Blob([text]).size,
+            addedAt: new Date().toISOString(),
+            selected: true,
+          })
+          imported++
+        }
+
+        if (ragImportImages && (source.imageCount ?? 0) > 0) {
+          setRagMsg(`🖼️ ${source.name} の画像を取得中...`)
+          const images = await getSourceImages(ragBaseUrl, sourceId)
+          for (const img of images) {
+            try {
+              if (img.imageCaption) {
+                const captionText = `[図の説明 ${img.chunkIndex + 1}]\n${img.imageCaption}`
+                addDataSource({
+                  id: uuidv4(),
+                  type: 'text',
+                  name: `[RAG図] ${source.name} #${img.chunkIndex + 1}`,
+                  content: captionText,
+                  size: new Blob([captionText]).size,
+                  addedAt: new Date().toISOString(),
+                  selected: true,
+                })
+              }
+              if (img.imageUrl) {
+                const { base64, mimeType } = await imageUrlToBase64(img.imageUrl)
+                const file = await (await fetch(`data:${mimeType};base64,${base64}`)).blob()
+                const ocrText = await extractTextFromImage(
+                  settings.geminiApiKey,
+                  settings.geminiModel,
+                  new File([file], `rag_img_${img.chunkIndex}.jpg`, { type: mimeType })
+                )
+                addDataSource({
+                  id: uuidv4(),
+                  type: 'image',
+                  name: `[RAG画像] ${source.name} #${img.chunkIndex + 1}`,
+                  content: ocrText,
+                  size: file.size,
+                  addedAt: new Date().toISOString(),
+                  selected: true,
+                })
+              }
+            } catch { /* 画像1件失敗は無視して続行 */ }
+          }
+        }
+      }
+      setRagMsg(`✅ ${imported}件のソースを読み込みました`)
+      setRagChecked(new Set())
+    } catch (err) {
+      setRagMsg(`❌ ${String(err)}`)
+    } finally {
+      setRagImporting(false)
+    }
+  }
 
   // アプリ内ブラウザから「取り込む」ボタンが押されたとき content-captured イベントを受信
   useEffect(() => {
@@ -316,7 +430,186 @@ export default function DataSourceView() {
           >
             🌐 URLから取り込む
           </button>
+
+          <button
+            onClick={() => { setShowRag(!showRag); if (!showRag && ragSources.length === 0) handleRagConnect() }}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 8,
+              padding: '8px 16px', borderRadius: 10,
+              border: `1px solid ${showRag ? 'rgba(99,102,241,0.5)' : 'var(--color-border)'}`,
+              background: showRag ? 'rgba(99,102,241,0.12)' : 'var(--color-surface-3)',
+              color: showRag ? '#a5b4fc' : 'var(--color-text-muted)',
+              fontSize: 13, cursor: 'pointer', transition: 'all 0.15s',
+            }}
+          >
+            🔬 SEIBUTURAGから読み込む
+          </button>
         </div>
+
+        {/* SEIBUTURAG panel */}
+        {showRag && (
+          <div
+            style={{
+              marginTop: 12, padding: 20, borderRadius: 14,
+              background: 'var(--color-surface-2)',
+              border: '1px solid rgba(99,102,241,0.3)',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
+              <span style={{ fontSize: 16 }}>🔬</span>
+              <p style={{ margin: 0, fontSize: 13, fontWeight: 700, color: '#a5b4fc' }}>
+                SEIBUTURAG
+              </p>
+              <span style={{ fontSize: 11, color: 'var(--color-text-dim)' }}>{ragBaseUrl}</span>
+              <button
+                onClick={handleRagConnect}
+                disabled={ragLoading}
+                style={{
+                  marginLeft: 'auto', padding: '5px 12px', borderRadius: 7,
+                  border: '1px solid rgba(99,102,241,0.4)',
+                  background: 'rgba(99,102,241,0.12)', color: '#a5b4fc',
+                  fontSize: 11, fontWeight: 700, cursor: 'pointer',
+                  opacity: ragLoading ? 0.5 : 1,
+                }}
+              >
+                {ragLoading ? '⏳ 接続中...' : '🔄 再読み込み'}
+              </button>
+            </div>
+
+            {/* ソース一覧 */}
+            {ragSources.length > 0 && (
+              <>
+                <p style={{ margin: '0 0 8px', fontSize: 11, fontWeight: 700, color: 'var(--color-text-dim)' }}>
+                  登録ソース ({ragSources.length}件) — チェックして読み込む
+                </p>
+                <div
+                  style={{
+                    maxHeight: 280, overflowY: 'auto',
+                    display: 'flex', flexDirection: 'column', gap: 5,
+                    marginBottom: 14,
+                  }}
+                >
+                  {ragSources.map((src) => {
+                    const checked = ragChecked.has(src.id)
+                    return (
+                      <div
+                        key={src.id}
+                        onClick={() => toggleRagSource(src.id)}
+                        style={{
+                          display: 'flex', alignItems: 'center', gap: 10,
+                          padding: '9px 12px', borderRadius: 8, cursor: 'pointer',
+                          border: `1px solid ${checked ? 'rgba(99,102,241,0.4)' : 'var(--color-border)'}`,
+                          background: checked ? 'rgba(99,102,241,0.08)' : 'var(--color-surface-3)',
+                          transition: 'all 0.12s',
+                        }}
+                      >
+                        <div
+                          style={{
+                            width: 16, height: 16, borderRadius: 4, flexShrink: 0,
+                            border: `2px solid ${checked ? '#818cf8' : 'var(--color-border-strong)'}`,
+                            background: checked ? '#818cf8' : 'transparent',
+                            display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          }}
+                        >
+                          {checked && <span style={{ color: '#fff', fontSize: 10, lineHeight: 1 }}>✓</span>}
+                        </div>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <p style={{ margin: 0, fontSize: 12, fontWeight: 500, color: 'var(--color-text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {src.name}
+                          </p>
+                          <p style={{ margin: '1px 0 0', fontSize: 10, color: 'var(--color-text-dim)' }}>
+                            {src.chunkCount}チャンク
+                            {(src.imageCount ?? 0) > 0 && ` · 画像${src.imageCount}枚`}
+                            {src.fileTypes?.length > 0 && ` · ${src.fileTypes.join('/')}`}
+                          </p>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+
+                {/* 検索クエリ */}
+                <div style={{ marginBottom: 10 }}>
+                  <p style={{ margin: '0 0 5px', fontSize: 11, fontWeight: 700, color: 'var(--color-text-dim)' }}>
+                    検索クエリ（省略時はソース名で自動検索）
+                  </p>
+                  <input
+                    type="text"
+                    placeholder="例：細胞膜の構造、DNAの複製"
+                    value={ragQuery}
+                    onChange={(e) => setRagQuery(e.target.value)}
+                    style={{
+                      width: '100%', padding: '8px 12px', borderRadius: 8,
+                      border: '1px solid var(--color-border)',
+                      background: 'var(--color-surface-3)', color: 'var(--color-text)',
+                      fontSize: 12, outline: 'none', boxSizing: 'border-box',
+                    }}
+                  />
+                </div>
+
+                {/* 画像オプション */}
+                <label
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12,
+                    fontSize: 12, color: 'var(--color-text-muted)', cursor: 'pointer',
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={ragImportImages}
+                    onChange={(e) => setRagImportImages(e.target.checked)}
+                    style={{ width: 14, height: 14 }}
+                  />
+                  画像も取り込む（Gemini Vision でOCR、画像を含むソースのみ）
+                </label>
+
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                  <button
+                    onClick={handleRagImport}
+                    disabled={ragChecked.size === 0 || ragImporting}
+                    style={{
+                      padding: '9px 22px', borderRadius: 8, border: 'none',
+                      background: ragChecked.size > 0 && !ragImporting
+                        ? 'linear-gradient(135deg, #6366f1 0%, #7c3aed 100%)'
+                        : 'var(--color-surface-3)',
+                      color: ragChecked.size > 0 && !ragImporting ? '#fff' : 'var(--color-text-dim)',
+                      fontSize: 13, fontWeight: 700, cursor: ragChecked.size > 0 ? 'pointer' : 'not-allowed',
+                      transition: 'all 0.15s',
+                    }}
+                  >
+                    {ragImporting ? '⏳ 読み込み中...' : `📥 ${ragChecked.size}件を読み込む`}
+                  </button>
+                  {ragChecked.size > 0 && (
+                    <button
+                      onClick={() => setRagChecked(new Set())}
+                      style={{
+                        padding: '9px 14px', borderRadius: 8,
+                        border: '1px solid var(--color-border)',
+                        background: 'transparent', color: 'var(--color-text-dim)',
+                        fontSize: 12, cursor: 'pointer',
+                      }}
+                    >
+                      選択解除
+                    </button>
+                  )}
+                </div>
+              </>
+            )}
+
+            {ragMsg && (
+              <p
+                style={{
+                  margin: '10px 0 0', fontSize: 12, padding: '8px 12px', borderRadius: 8,
+                  background: ragMsg.startsWith('❌') ? 'rgba(239,68,68,0.08)' : ragMsg.startsWith('✅') ? 'rgba(16,185,129,0.08)' : 'rgba(99,102,241,0.08)',
+                  color: ragMsg.startsWith('❌') ? '#f87171' : ragMsg.startsWith('✅') ? '#34d399' : 'var(--color-text-muted)',
+                  border: `1px solid ${ragMsg.startsWith('❌') ? 'rgba(239,68,68,0.3)' : ragMsg.startsWith('✅') ? 'rgba(16,185,129,0.3)' : 'rgba(99,102,241,0.25)'}`,
+                }}
+              >
+                {ragMsg}
+              </p>
+            )}
+          </div>
+        )}
 
         {/* URL panel */}
         {showUrl && (

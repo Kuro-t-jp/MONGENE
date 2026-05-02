@@ -7,6 +7,9 @@ import { parseFile, detectFileType } from '../lib/parsers'
 import { extractTextFromImage, generateQuestions, generatePassageSets } from '../lib/gemini'
 import { EXAM_LEVEL_CONFIGS, QUESTION_TYPE_CONFIGS, CURRICULUM_STAGE_CONFIGS } from '../types'
 import type { DataSourceType, ExamLevel, QuestionType, CurriculumStage } from '../types'
+import { TEMPLATES } from '../lib/templates'
+import { listSources, fetchSourceAsText, getSourceImages, imageUrlToBase64 } from '../lib/seibuturagClient'
+import type { SeibuturagSource } from '../lib/seibuturagClient'
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -110,6 +113,24 @@ export default function Sidebar() {
 
   // ── Local state ──────────────────────────────────────────────────────────
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const scrollRef    = useRef<HTMLDivElement>(null)
+  const scrollTopRef = useRef(0)
+
+  // スクロール位置を再レンダリング前後で保持する
+  useEffect(() => {
+    const el = scrollRef.current
+    if (!el) return
+    const save = () => { scrollTopRef.current = el.scrollTop }
+    el.addEventListener('scroll', save, { passive: true })
+    return () => el.removeEventListener('scroll', save)
+  }, [])
+
+  useEffect(() => {
+    const el = scrollRef.current
+    if (el && Math.abs(el.scrollTop - scrollTopRef.current) > 50) {
+      el.scrollTop = scrollTopRef.current
+    }
+  })
   const [fileLoading,     setFileLoading]     = useState(false)
   const [fileLoadingName, setFileLoadingName] = useState('')
   const [fileError,       setFileError]       = useState<string | null>(null)
@@ -123,6 +144,19 @@ export default function Sidebar() {
   const [genError,        setGenError]        = useState<string | null>(null)
   const [genSuccess,      setGenSuccess]      = useState<string | null>(null)
   const [showKey,         setShowKey]         = useState(false)
+
+  // ── SEIBUTURAG ────────────────────────────────────────────────────────────
+  const [showRag,         setShowRag]         = useState(false)
+  const [ragSources,      setRagSources]      = useState<SeibuturagSource[]>([])
+  const [ragLoading,      setRagLoading]      = useState(false)
+  const [ragImporting,    setRagImporting]    = useState(false)
+  const [ragMsg,          setRagMsg]          = useState<string | null>(null)
+  const [ragChecked,      setRagChecked]      = useState<Set<string>>(new Set())
+  const [ragQuery,        setRagQuery]        = useState('')
+  const [ragConnected,    setRagConnected]    = useState(false)
+
+  // ── Templates ─────────────────────────────────────────────────────────────
+  const [appliedTemplate, setAppliedTemplate] = useState<string | null>(null)
 
   // ── URL capture event ────────────────────────────────────────────────────
   useEffect(() => {
@@ -197,6 +231,107 @@ export default function Sidebar() {
       setUrlMsg(`❌ ${String(err)}`)
       setUrlLoading(false)
     }
+  }
+
+  // ── SEIBUTURAG handlers ───────────────────────────────────────────────────
+  const ragBaseUrl = settings.seibuturagBaseUrl || 'http://localhost:3001'
+
+  const handleRagConnect = async () => {
+    setRagLoading(true)
+    setRagMsg('🔌 接続中...')
+    try {
+      const sources = await listSources(ragBaseUrl)
+      const valid = sources.filter((s) => (s.chunkCount ?? 0) > 0)
+      setRagSources(valid)
+      setRagConnected(true)
+      setRagMsg(valid.length === 0 ? '⚠️ ソースが見つかりません' : `✅ ${valid.length}件のソースを取得しました`)
+    } catch (err) {
+      setRagMsg(`❌ 接続失敗: ${String(err)}`)
+      setRagConnected(false)
+    } finally {
+      setRagLoading(false)
+    }
+  }
+
+  const toggleRagSource = (id: string) => {
+    setRagChecked((prev) => {
+      const next = new Set(prev)
+      next.has(id) ? next.delete(id) : next.add(id)
+      return next
+    })
+  }
+
+  const handleRagImport = async () => {
+    if (ragChecked.size === 0) return
+    setRagImporting(true)
+    let imported = 0
+    try {
+      for (const sourceId of ragChecked) {
+        const source = ragSources.find((s) => s.id === sourceId)
+        if (!source) continue
+        setRagMsg(`📥 ${source.name} を取得中...`)
+        const text = await fetchSourceAsText(ragBaseUrl, source, ragQuery)
+        if (text.trim()) {
+          addDataSource({
+            id: uuidv4(), type: 'text',
+            name: `[RAG] ${source.name}`,
+            content: text,
+            size: new Blob([text]).size,
+            addedAt: new Date().toISOString(),
+            selected: true,
+          })
+          imported++
+        }
+        if ((source.imageCount ?? 0) > 0) {
+          setRagMsg(`🖼️ ${source.name} の画像を取得中...`)
+          try {
+            const images = await getSourceImages(ragBaseUrl, sourceId)
+            for (const img of images) {
+              if (img.imageCaption) {
+                const captionText = `[図の説明 ${img.chunkIndex + 1}]\n${img.imageCaption}`
+                addDataSource({
+                  id: uuidv4(), type: 'text',
+                  name: `[RAG図] ${source.name} #${img.chunkIndex + 1}`,
+                  content: captionText,
+                  size: new Blob([captionText]).size,
+                  addedAt: new Date().toISOString(),
+                  selected: true,
+                })
+              }
+              if (img.imageUrl && settings.geminiApiKey) {
+                const { base64, mimeType } = await imageUrlToBase64(img.imageUrl)
+                const file = await (await fetch(`data:${mimeType};base64,${base64}`)).blob()
+                const ocrText = await extractTextFromImage(
+                  settings.geminiApiKey, settings.geminiModel,
+                  new File([file], `rag_img_${img.chunkIndex}.jpg`, { type: mimeType })
+                )
+                addDataSource({
+                  id: uuidv4(), type: 'image',
+                  name: `[RAG画像] ${source.name} #${img.chunkIndex + 1}`,
+                  content: ocrText, size: file.size,
+                  addedAt: new Date().toISOString(),
+                  selected: true,
+                })
+              }
+            }
+          } catch { /* 画像失敗は無視して続行 */ }
+        }
+      }
+      setRagMsg(`✅ ${imported}件を読み込みました — データソース欄を確認してください`)
+      setRagChecked(new Set())
+    } catch (err) {
+      setRagMsg(`❌ ${String(err)}`)
+    } finally {
+      setRagImporting(false)
+    }
+  }
+
+  // ── Template handler ──────────────────────────────────────────────────────
+  const applyTemplate = (templateId: string) => {
+    const tpl = TEMPLATES.find((t) => t.id === templateId)
+    if (!tpl) return
+    updateConfig(tpl.config)
+    setAppliedTemplate(templateId)
   }
 
   // ── Generation ───────────────────────────────────────────────────────────
@@ -294,7 +429,19 @@ export default function Sidebar() {
       </div>
 
       {/* ── Scrollable body ───────────────────────────────────────────────── */}
-      <div style={{ flex: 1, overflowY: 'auto' }}>
+      <div ref={scrollRef} style={{ flex: 1, overflowY: 'auto' }}>
+
+        {/* API キー未設定バナー */}
+        {!settings.geminiApiKey && (
+          <div style={{
+            margin: '10px 10px 0', padding: '9px 12px', borderRadius: 10,
+            background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.3)',
+            fontSize: 11, color: '#f87171', lineHeight: 1.5,
+          }}>
+            ⚠️ <strong>Gemini APIキー未設定</strong><br />
+            下の「設定」セクションにAPIキーを入力してください。
+          </div>
+        )}
 
         {/* ══ データソース ══════════════════════════════════════════════════ */}
         <Section title="データソース" emoji="📂" badge={dataSources.length} defaultOpen>
@@ -366,6 +513,26 @@ export default function Sidebar() {
             <button onClick={() => { setShowUrl(!showUrl); setShowPaste(false) }} style={{ ...btn, background: 'var(--color-surface-3)' }}>
               🌐 URLから取り込む
             </button>
+            <button
+              onClick={() => {
+                setShowRag((v) => !v)
+                if (!showRag && !ragConnected) handleRagConnect()
+              }}
+              style={{
+                ...btn,
+                background: showRag ? 'rgba(99,102,241,0.12)' : 'var(--color-surface-3)',
+                color: showRag ? '#a5b4fc' : 'var(--color-text-muted)',
+                border: `1px solid ${showRag ? 'rgba(99,102,241,0.4)' : 'var(--color-border)'}`,
+                display: 'flex', alignItems: 'center', gap: 6,
+              }}
+            >
+              🔬 SEIBUTURAGから読み込む
+              {ragConnected && (
+                <span style={{ fontSize: 9, padding: '1px 5px', borderRadius: 8, background: 'rgba(16,185,129,0.2)', color: '#34d399', fontWeight: 700 }}>
+                  接続済
+                </span>
+              )}
+            </button>
             {dataSources.length > 0 && (
               <button
                 onClick={() => { if (window.confirm('全てのデータソースを削除しますか？')) clearDataSources() }}
@@ -375,6 +542,97 @@ export default function Sidebar() {
               </button>
             )}
           </div>
+
+          {/* SEIBUTURAG panel */}
+          {showRag && (
+            <div style={{ marginTop: 8, padding: 12, borderRadius: 10, background: 'rgba(99,102,241,0.06)', border: '1px solid rgba(99,102,241,0.25)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+                <span style={{ fontSize: 12, fontWeight: 700, color: '#a5b4fc' }}>🔬 SEIBUTURAG</span>
+                <span style={{ fontSize: 10, color: 'var(--color-text-dim)', flex: 1 }}>{ragBaseUrl}</span>
+                <button
+                  onClick={handleRagConnect}
+                  disabled={ragLoading}
+                  style={{ padding: '2px 8px', borderRadius: 5, border: '1px solid rgba(99,102,241,0.3)', background: 'rgba(99,102,241,0.1)', color: '#a5b4fc', fontSize: 10, cursor: 'pointer', opacity: ragLoading ? 0.5 : 1 }}
+                >
+                  {ragLoading ? '⏳' : '🔄'}
+                </button>
+              </div>
+
+              {ragMsg && (
+                <div style={{
+                  fontSize: 11, padding: '5px 8px', borderRadius: 6, marginBottom: 8,
+                  background: ragMsg.startsWith('❌') ? 'rgba(239,68,68,0.08)' : ragMsg.startsWith('✅') ? 'rgba(16,185,129,0.08)' : 'rgba(99,102,241,0.08)',
+                  color: ragMsg.startsWith('❌') ? '#f87171' : ragMsg.startsWith('✅') ? '#34d399' : 'var(--color-text-muted)',
+                  lineHeight: 1.5,
+                }}>
+                  {ragMsg}
+                </div>
+              )}
+
+              {ragSources.length > 0 && (
+                <>
+                  <div style={{ fontSize: 10, color: 'var(--color-text-dim)', marginBottom: 5 }}>
+                    ソース（チェックして読み込む）
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 3, maxHeight: 160, overflowY: 'auto', marginBottom: 8 }}>
+                    {ragSources.map((src) => {
+                      const checked = ragChecked.has(src.id)
+                      return (
+                        <div
+                          key={src.id}
+                          onClick={() => toggleRagSource(src.id)}
+                          style={{
+                            display: 'flex', alignItems: 'center', gap: 6, padding: '5px 7px', borderRadius: 6, cursor: 'pointer',
+                            background: checked ? 'rgba(99,102,241,0.12)' : 'var(--color-surface-3)',
+                            border: `1px solid ${checked ? 'rgba(99,102,241,0.4)' : 'var(--color-border)'}`,
+                          }}
+                        >
+                          <div style={{
+                            width: 13, height: 13, borderRadius: 3, flexShrink: 0,
+                            border: `1.5px solid ${checked ? '#818cf8' : 'var(--color-border-strong)'}`,
+                            background: checked ? '#818cf8' : 'transparent',
+                            display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          }}>
+                            {checked && <span style={{ color: '#fff', fontSize: 8 }}>✓</span>}
+                          </div>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontSize: 11, fontWeight: 500, color: 'var(--color-text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              {src.name}
+                            </div>
+                            <div style={{ fontSize: 9, color: 'var(--color-text-dim)' }}>
+                              {src.chunkCount}チャンク{(src.imageCount ?? 0) > 0 && ` · 画像${src.imageCount}枚`}
+                            </div>
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+
+                  <input
+                    type="text"
+                    placeholder="検索クエリ（省略可）"
+                    value={ragQuery}
+                    onChange={(e) => setRagQuery(e.target.value)}
+                    style={{ ...inp, marginBottom: 6 }}
+                  />
+
+                  <button
+                    onClick={handleRagImport}
+                    disabled={ragChecked.size === 0 || ragImporting}
+                    style={{
+                      ...btn,
+                      background: ragChecked.size > 0 && !ragImporting ? 'linear-gradient(135deg, #6366f1 0%, #7c3aed 100%)' : 'var(--color-surface-3)',
+                      color: ragChecked.size > 0 && !ragImporting ? '#fff' : 'var(--color-text-dim)',
+                      border: 'none', textAlign: 'center', fontWeight: 700,
+                      cursor: ragChecked.size > 0 ? 'pointer' : 'not-allowed',
+                    }}
+                  >
+                    {ragImporting ? '⏳ 読み込み中...' : `📥 ${ragChecked.size}件を読み込む`}
+                  </button>
+                </>
+              )}
+            </div>
+          )}
 
           {/* Paste panel */}
           {showPaste && (
@@ -434,6 +692,44 @@ export default function Sidebar() {
               )}
             </div>
           )}
+        </Section>
+
+        {/* ══ テンプレート ══════════════════════════════════════════════════ */}
+        <Section title="テンプレート" emoji="📋" defaultOpen>
+          <div style={{ fontSize: 11, color: 'var(--color-text-dim)', marginBottom: 8, lineHeight: 1.5 }}>
+            選ぶと問題形式・レベル・問題数が自動設定されます。
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {TEMPLATES.map((tpl) => {
+              const active = appliedTemplate === tpl.id
+              return (
+                <button
+                  key={tpl.id}
+                  onClick={() => applyTemplate(tpl.id)}
+                  style={{
+                    ...btn,
+                    display: 'flex', alignItems: 'flex-start', gap: 8,
+                    padding: '8px 10px', borderRadius: 8,
+                    background: active ? 'rgba(99,102,241,0.14)' : 'var(--color-surface-3)',
+                    border: `1px solid ${active ? 'var(--color-primary)' : 'var(--color-border)'}`,
+                    color: active ? 'var(--color-primary-hover)' : 'var(--color-text-muted)',
+                    textAlign: 'left',
+                  }}
+                >
+                  <span style={{ fontSize: 16, flexShrink: 0, lineHeight: 1.3 }}>{tpl.emoji}</span>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, marginBottom: 1 }}>{tpl.name}</div>
+                    <div style={{ fontSize: 10, opacity: 0.7, lineHeight: 1.4 }}>{tpl.description}</div>
+                  </div>
+                  {active && (
+                    <span style={{ fontSize: 10, padding: '1px 5px', borderRadius: 8, background: 'rgba(99,102,241,0.2)', color: 'var(--color-primary)', fontWeight: 700, flexShrink: 0 }}>
+                      適用中
+                    </span>
+                  )}
+                </button>
+              )
+            })}
+          </div>
         </Section>
 
         {/* ══ 生成設定 ═════════════════════════════════════════════════════ */}
@@ -689,7 +985,7 @@ export default function Sidebar() {
         </Section>
 
         {/* ══ 設定 ══════════════════════════════════════════════════════════ */}
-        <Section title="設定" emoji="⚙️">
+        <Section title="設定" emoji="⚙️" defaultOpen={!settings.geminiApiKey}>
 
           {/* API Key */}
           <div style={{ marginBottom: 14 }}>

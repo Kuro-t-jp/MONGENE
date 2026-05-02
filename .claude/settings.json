@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(curl -s http://localhost:3000/api/sources)",
+      "Bash(curl -s http://localhost:3001/api/sources)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:1420/)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:3001/api/sources)",
+      "Bash(curl -v -H \"Origin: tauri://localhost\" http://localhost:3001/api/sources)",
+      "Bash(curl -v -H \"Origin: https://tauri.localhost\" http://localhost:3001/api/sources)"
+    ]
+  }
+}

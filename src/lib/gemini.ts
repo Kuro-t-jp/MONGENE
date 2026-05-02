@@ -1,7 +1,7 @@
 import { GoogleGenerativeAI } from '@google/generative-ai'
 import { v4 as uuidv4 } from 'uuid'
 import type { Question, PassageSet, GenerationConfig, ExamLevel, QuestionType } from '../types'
-import { buildGenerationPrompt, buildPassagePrompt } from './prompts'
+import { buildGenerationPrompt, buildPassagePrompt, buildFigurePrompt } from './prompts'
 
 // ─── リトライ付き generateContent ──────────────────────────────────────────
 async function generateWithRetry(
@@ -238,6 +238,78 @@ export async function generatePassageSets(
     id: uuidv4(),
     title: String(ps.title ?? '長文読解問題'),
     passage: String(ps.passage ?? ''),
+    level: (ps.level as ExamLevel) ?? defaultLevel,
+    subject: String(ps.subject ?? config.subject ?? ''),
+    questionMode: 'passage' as const,
+    checked: false,
+    createdAt: now,
+    questions: Array.isArray(ps.questions)
+      ? ps.questions.map((q: any, i: number) => ({
+          id: uuidv4(),
+          questionNumber: Number(q.question_number ?? i + 1),
+          type: (q.type as QuestionType) ?? 'multiple_choice_4',
+          content: String(q.content ?? ''),
+          choices: Array.isArray(q.choices) ? q.choices : undefined,
+          correctAnswer: String(q.correctAnswer ?? q.correct_answer ?? ''),
+          explanation: String(q.explanation ?? ''),
+          tags: Array.isArray(q.tags) ? q.tags.map(String) : [],
+        }))
+      : [],
+  }))
+}
+
+// ─── 図解問題セット生成 ────────────────────────────────────────────────────
+export async function generateFigureSets(
+  apiKey: string,
+  modelName: string,
+  sources: Array<{ name: string; content: string }>,
+  config: GenerationConfig,
+  onProgress?: (msg: string) => void
+): Promise<PassageSet[]> {
+  if (!apiKey) throw new Error('Gemini APIキーが設定されていません')
+  onProgress?.('Gemini APIに接続中...')
+
+  const genAI = new GoogleGenerativeAI(apiKey)
+  const model = genAI.getGenerativeModel({
+    model: modelName,
+    generationConfig: {
+      responseMimeType: 'application/json',
+      temperature: 0.7,
+      maxOutputTokens: 65536,
+    },
+  })
+
+  const sourceTexts = sources.map((s) => `=== ${s.name} ===\n${s.content}`)
+  const prompt = buildFigurePrompt(sourceTexts, config)
+
+  onProgress?.('AIが図解問題を生成中...')
+
+  const result = await generateWithRetry(model, prompt, 4, onProgress)
+  const text = result.response.text()
+  const finishReason = result.response.candidates?.[0]?.finishReason
+
+  onProgress?.('レスポンスを解析中...')
+
+  let passageSets: unknown[]
+  if (finishReason === 'MAX_TOKENS') {
+    passageSets = extractCompleteObjects(text, 'passage_sets')
+    if (passageSets.length === 0) throw new Error('AIの出力がトークン上限で打ち切られました。セット数を減らして再試行してください。')
+    onProgress?.(`⚠️ 出力が打ち切られました。回収できたセット: ${passageSets.length}件`)
+  } else {
+    const parsed = extractJSON(text) as { passage_sets: unknown[] }
+    if (!Array.isArray(parsed.passage_sets)) throw new Error('無効なレスポンス形式です')
+    passageSets = parsed.passage_sets
+  }
+
+  const defaultLevel = config.levels[0] ?? 'high_exam'
+  const now = new Date().toISOString()
+
+  return passageSets.map((ps: any) => ({
+    id: uuidv4(),
+    title: String(ps.title ?? '図解問題'),
+    passage: String(ps.passage ?? ''),
+    figureType: String(ps.figure_type ?? ''),
+    questionMode: 'figure' as const,
     level: (ps.level as ExamLevel) ?? defaultLevel,
     subject: String(ps.subject ?? config.subject ?? ''),
     checked: false,

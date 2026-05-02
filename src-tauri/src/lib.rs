@@ -243,6 +243,40 @@ async fn save_text_to_downloads(filename: String, content: String) -> Result<Str
     Ok(format!("{} ({} bytes)", path.to_string_lossy(), bytes.len()))
 }
 
+/// SEIBUTURAG への GET リクエストを Rust 経由で中継（CORS 回避）
+#[tauri::command]
+async fn seibuturag_get(url: String) -> Result<String, String> {
+    let client = reqwest::Client::new();
+    let res = client
+        .get(&url)
+        .header("Accept", "application/json")
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !res.status().is_success() {
+        return Err(format!("HTTP {}", res.status().as_u16()));
+    }
+    res.text().await.map_err(|e| e.to_string())
+}
+
+/// SEIBUTURAG への POST リクエストを Rust 経由で中継（CORS 回避）
+#[tauri::command]
+async fn seibuturag_post(url: String, body: String) -> Result<String, String> {
+    let client = reqwest::Client::new();
+    let res = client
+        .post(&url)
+        .header("Content-Type", "application/json")
+        .header("Accept", "application/json")
+        .body(body)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !res.status().is_success() {
+        return Err(format!("HTTP {}", res.status().as_u16()));
+    }
+    res.text().await.map_err(|e| e.to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -255,6 +289,8 @@ pub fn run() {
             save_text_to_downloads,
             open_notebooklm_window,
             store_captured_content,
+            seibuturag_get,
+            seibuturag_post,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

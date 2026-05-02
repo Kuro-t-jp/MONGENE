@@ -21,7 +21,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self' tauri: asset: https://*.googleapis.com; connect-src https://generativelanguage.googleapis.com https://oauth2.googleapis.com https://forms.googleapis.com http://127.0.0.1:14201; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' blob:; worker-src blob: 'self'"
+      "csp": "default-src 'self' tauri: asset: https://*.googleapis.com; connect-src https://generativelanguage.googleapis.com https://oauth2.googleapis.com https://forms.googleapis.com http://127.0.0.1:14201 http://localhost:3001 http://127.0.0.1:3001; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' blob:; worker-src blob: 'self'"
     }
   },
   "bundle": {

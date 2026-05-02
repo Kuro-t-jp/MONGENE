@@ -18,7 +18,7 @@ const TYPE_COLORS: Record<string, { bg: string; text: string; border: string }> 
   calculation:       { bg: 'rgba(244,114,182,0.1)',  text: '#f472b6', border: 'rgba(244,114,182,0.25)' },
 }
 
-function SubQuestionItem({ q, num }: { q: SubQuestion; num: number }) {
+function SubQuestionItem({ q, num, isFigure }: { q: SubQuestion; num: number; isFigure: boolean }) {
   const [open, setOpen] = useState(false)
   const typeConfig = QUESTION_TYPE_CONFIGS.find((c) => c.id === q.type)
   const tc = TYPE_COLORS[q.type] ?? { bg: 'rgba(148,163,184,0.1)', text: '#94a3b8', border: 'rgba(148,163,184,0.25)' }
@@ -27,12 +27,11 @@ function SubQuestionItem({ q, num }: { q: SubQuestion; num: number }) {
     <div
       style={{
         borderRadius: 10,
-        border: '1px solid var(--color-border)',
+        border: `1px solid ${isFigure ? 'rgba(99,102,241,0.2)' : 'var(--color-border)'}`,
         background: 'var(--color-surface-1)',
         overflow: 'hidden',
       }}
     >
-      {/* Sub-question header */}
       <div
         style={{
           display: 'flex', alignItems: 'flex-start', gap: 10,
@@ -40,16 +39,19 @@ function SubQuestionItem({ q, num }: { q: SubQuestion; num: number }) {
         }}
         onClick={() => setOpen(!open)}
       >
+        {/* Question number badge */}
         <span
           style={{
-            flexShrink: 0, width: 22, height: 22, borderRadius: 6,
-            background: 'var(--color-surface-3)',
+            flexShrink: 0, width: 26, height: 26, borderRadius: isFigure ? '50%' : 6,
+            background: isFigure ? 'rgba(99,102,241,0.15)' : 'var(--color-surface-3)',
+            border: isFigure ? '1px solid rgba(99,102,241,0.3)' : 'none',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
-            fontSize: 11, fontWeight: 700, color: 'var(--color-text-muted)',
+            fontSize: 11, fontWeight: 700,
+            color: isFigure ? '#818cf8' : 'var(--color-text-muted)',
             marginTop: 1,
           }}
         >
-          {num}
+          {isFigure ? `(${num})` : num}
         </span>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
@@ -77,19 +79,16 @@ function SubQuestionItem({ q, num }: { q: SubQuestion; num: number }) {
         </span>
       </div>
 
-      {/* Expanded */}
       {open && (
         <div
           style={{
-            borderTop: '1px solid var(--color-border)',
-            padding: '12px 14px 14px 46px',
+            borderTop: `1px solid ${isFigure ? 'rgba(99,102,241,0.15)' : 'var(--color-border)'}`,
+            padding: '12px 14px 14px 50px',
             display: 'flex', flexDirection: 'column', gap: 12,
           }}
         >
-          {/* Full question */}
           <p style={{ margin: 0, fontSize: 13, lineHeight: 1.7, whiteSpace: 'pre-wrap' }}>{q.content}</p>
 
-          {/* Choices */}
           {q.choices && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
               {q.choices.map((c) => (
@@ -110,7 +109,6 @@ function SubQuestionItem({ q, num }: { q: SubQuestion; num: number }) {
             </div>
           )}
 
-          {/* Answer */}
           <div>
             <p style={{ margin: '0 0 4px', fontSize: 10, fontWeight: 700, color: 'var(--color-text-dim)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>正解</p>
             <div
@@ -124,20 +122,89 @@ function SubQuestionItem({ q, num }: { q: SubQuestion; num: number }) {
             </div>
           </div>
 
-          {/* Explanation */}
           {q.explanation && (
             <div>
               <p style={{ margin: '0 0 4px', fontSize: 10, fontWeight: 700, color: 'var(--color-text-dim)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>解説</p>
-              <p
-                style={{
-                  margin: 0, fontSize: 12, lineHeight: 1.7,
-                  color: 'var(--color-text-muted)', whiteSpace: 'pre-wrap',
-                }}
-              >
+              <p style={{ margin: 0, fontSize: 12, lineHeight: 1.7, color: 'var(--color-text-muted)', whiteSpace: 'pre-wrap' }}>
                 {q.explanation}
               </p>
             </div>
           )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── 図解問題の図説明ブロック ────────────────────────────────────────────────
+function FigureBlock({ passage, figureType }: { passage: string; figureType?: string }) {
+  const [open, setOpen] = useState(true)
+
+  // ラベル (a)(b)... や ①②... を強調表示
+  const highlighted = passage.replace(
+    /(\([a-z]\)|\([A-Z]\)|①|②|③|④|⑤|⑥|⑦|⑧|⑨|⑩)/g,
+    (m) => `<mark style="background:rgba(99,102,241,0.18);color:#a5b4fc;border-radius:3px;padding:0 2px;font-weight:700;">${m}</mark>`
+  )
+
+  return (
+    <div
+      style={{
+        borderRadius: 12,
+        border: '1px solid rgba(99,102,241,0.3)',
+        background: 'rgba(99,102,241,0.04)',
+        overflow: 'hidden',
+      }}
+    >
+      <button
+        onClick={() => setOpen(!open)}
+        style={{
+          width: '100%', display: 'flex', alignItems: 'center', gap: 10,
+          padding: '10px 14px', border: 'none', background: 'transparent', cursor: 'pointer',
+        }}
+      >
+        <span style={{ fontSize: 16 }}>🔬</span>
+        <span style={{ fontSize: 12, fontWeight: 700, color: '#818cf8', flex: 1, textAlign: 'left' }}>
+          図の説明文
+          {figureType && (
+            <span
+              style={{
+                marginLeft: 8, fontSize: 10, fontWeight: 600,
+                padding: '1px 8px', borderRadius: 20,
+                background: 'rgba(99,102,241,0.15)', color: '#a5b4fc',
+                border: '1px solid rgba(99,102,241,0.25)',
+              }}
+            >
+              {figureType}
+            </span>
+          )}
+        </span>
+        <span style={{ fontSize: 11, color: 'var(--color-text-dim)' }}>
+          {passage.length}字　{open ? '▲ 閉じる' : '▼ 開く'}
+        </span>
+      </button>
+      {open && (
+        <div
+          style={{
+            borderTop: '1px solid rgba(99,102,241,0.2)',
+            padding: '14px 16px',
+          }}
+        >
+          {/* 試験風のボックス */}
+          <div
+            style={{
+              border: '1px solid rgba(99,102,241,0.25)',
+              borderRadius: 8,
+              padding: '14px 16px',
+              background: 'var(--color-surface-1)',
+              fontSize: 13, lineHeight: 1.9, color: 'var(--color-text)',
+              whiteSpace: 'pre-wrap', maxHeight: 420, overflowY: 'auto',
+              fontFamily: '"Hiragino Kaku Gothic ProN", "Yu Gothic", sans-serif',
+            }}
+            dangerouslySetInnerHTML={{ __html: highlighted }}
+          />
+          <p style={{ margin: '8px 0 0', fontSize: 10, color: 'var(--color-text-dim)' }}>
+            ※ カラーハイライトは図中ラベル（(a)(b)… / ①②…）を示します
+          </p>
         </div>
       )}
     </div>
@@ -150,21 +217,23 @@ export default function PassageCard({ passageSet, index }: Props) {
   const [passageOpen, setPassageOpen] = useState(false)
   const [expanded, setExpanded] = useState(true)
 
+  const isFigure = passageSet.questionMode === 'figure'
   const levelConfig = EXAM_LEVEL_CONFIGS.find((c) => c.id === passageSet.level)
 
   return (
     <div
       style={{
         borderRadius: 14,
-        border: `1px solid ${passageSet.checked ? 'var(--color-border-strong)' : 'var(--color-border)'}`,
+        border: `1px solid ${passageSet.checked
+          ? (isFigure ? 'rgba(99,102,241,0.5)' : 'var(--color-border-strong)')
+          : (isFigure ? 'rgba(99,102,241,0.25)' : 'var(--color-border)')}`,
         background: passageSet.checked ? 'var(--color-surface-2)' : 'var(--color-surface-1)',
-        opacity: passageSet.checked ? 1 : 0.65,
+        opacity: passageSet.checked ? 1 : 0.7,
         transition: 'all 0.15s',
       }}
     >
       {/* Card header */}
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: '14px 16px' }}>
-        {/* Checkbox */}
         <div
           onClick={() => togglePassageSet(passageSet.id)}
           style={{
@@ -177,20 +246,30 @@ export default function PassageCard({ passageSet, index }: Props) {
           {passageSet.checked && <span style={{ color: '#fff', fontSize: 10, lineHeight: 1 }}>✓</span>}
         </div>
 
-        {/* Title & meta */}
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginBottom: 6 }}>
             <span style={{ fontSize: 11, fontFamily: 'monospace', color: 'var(--color-text-dim)' }}>
               第{index + 1}問
             </span>
-            <span
-              style={{
-                fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 20,
-                color: '#818cf8', background: 'rgba(129,140,248,0.12)', border: '1px solid rgba(129,140,248,0.25)',
-              }}
-            >
-              📖 長文読解
-            </span>
+            {isFigure ? (
+              <span
+                style={{
+                  fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 20,
+                  color: '#a5b4fc', background: 'rgba(99,102,241,0.15)', border: '1px solid rgba(99,102,241,0.3)',
+                }}
+              >
+                🔬 図解問題
+              </span>
+            ) : (
+              <span
+                style={{
+                  fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 20,
+                  color: '#818cf8', background: 'rgba(129,140,248,0.12)', border: '1px solid rgba(129,140,248,0.25)',
+                }}
+              >
+                📖 長文読解
+              </span>
+            )}
             <span
               style={{
                 fontSize: 11, padding: '2px 8px', borderRadius: 20,
@@ -213,12 +292,16 @@ export default function PassageCard({ passageSet, index }: Props) {
               設問 {passageSet.questions.length}問
             </span>
           </div>
-          <p style={{ margin: 0, fontSize: 13, fontWeight: 600, color: 'var(--color-text)' }}>
+          <p style={{ margin: 0, fontSize: 13, fontWeight: 700, color: 'var(--color-text)' }}>
+            {isFigure && (
+              <span style={{ marginRight: 6, color: '#818cf8' }}>
+                例題{index + 1}
+              </span>
+            )}
             {passageSet.title}
           </p>
         </div>
 
-        {/* Actions */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
           <button
             onClick={() => setExpanded(!expanded)}
@@ -243,58 +326,64 @@ export default function PassageCard({ passageSet, index }: Props) {
         </div>
       </div>
 
-      {/* Expanded body */}
       {expanded && (
         <div
           style={{
-            borderTop: '1px solid var(--color-border)',
+            borderTop: `1px solid ${isFigure ? 'rgba(99,102,241,0.15)' : 'var(--color-border)'}`,
             padding: '16px 20px 20px',
             display: 'flex', flexDirection: 'column', gap: 16,
           }}
         >
-          {/* Passage (リード文) */}
-          <div
-            style={{
-              borderRadius: 10,
-              border: '1px solid var(--color-border)',
-              background: 'var(--color-surface-3)',
-              overflow: 'hidden',
-            }}
-          >
-            <button
-              onClick={() => setPassageOpen(!passageOpen)}
+          {/* 図解モード: 専用の図説明ブロック / 長文モード: 折りたたみ式本文 */}
+          {isFigure ? (
+            <FigureBlock passage={passageSet.passage} figureType={passageSet.figureType} />
+          ) : (
+            <div
               style={{
-                width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                padding: '10px 14px', border: 'none', background: 'transparent', cursor: 'pointer',
-                color: 'var(--color-text)',
+                borderRadius: 10,
+                border: '1px solid var(--color-border)',
+                background: 'var(--color-surface-3)',
+                overflow: 'hidden',
               }}
             >
-              <span style={{ fontSize: 12, fontWeight: 700 }}>📄 本文（リード文）</span>
-              <span style={{ fontSize: 11, color: 'var(--color-text-dim)' }}>
-                {passageSet.passage.length}字　{passageOpen ? '▲ 閉じる' : '▼ 開く'}
-              </span>
-            </button>
-            {passageOpen && (
-              <div
+              <button
+                onClick={() => setPassageOpen(!passageOpen)}
                 style={{
-                  borderTop: '1px solid var(--color-border)',
-                  padding: '12px 14px',
-                  fontSize: 13, lineHeight: 1.8, color: 'var(--color-text)',
-                  whiteSpace: 'pre-wrap', maxHeight: 400, overflowY: 'auto',
+                  width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                  padding: '10px 14px', border: 'none', background: 'transparent', cursor: 'pointer',
+                  color: 'var(--color-text)',
                 }}
               >
-                {passageSet.passage}
-              </div>
-            )}
-          </div>
+                <span style={{ fontSize: 12, fontWeight: 700 }}>📄 本文（リード文）</span>
+                <span style={{ fontSize: 11, color: 'var(--color-text-dim)' }}>
+                  {passageSet.passage.length}字　{passageOpen ? '▲ 閉じる' : '▼ 開く'}
+                </span>
+              </button>
+              {passageOpen && (
+                <div
+                  style={{
+                    borderTop: '1px solid var(--color-border)',
+                    padding: '12px 14px',
+                    fontSize: 13, lineHeight: 1.8, color: 'var(--color-text)',
+                    whiteSpace: 'pre-wrap', maxHeight: 400, overflowY: 'auto',
+                  }}
+                >
+                  {passageSet.passage}
+                </div>
+              )}
+            </div>
+          )}
 
-          {/* Sub-questions */}
+          {/* 設問一覧 */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            <p style={{ margin: 0, fontSize: 12, fontWeight: 700, color: 'var(--color-text-dim)' }}>
-              設問一覧
+            <p style={{
+              margin: 0, fontSize: 12, fontWeight: 700,
+              color: isFigure ? '#818cf8' : 'var(--color-text-dim)',
+            }}>
+              {isFigure ? '問' : '設問一覧'}
             </p>
             {passageSet.questions.map((q) => (
-              <SubQuestionItem key={q.id} q={q} num={q.questionNumber} />
+              <SubQuestionItem key={q.id} q={q} num={q.questionNumber} isFigure={isFigure} />
             ))}
           </div>
         </div>

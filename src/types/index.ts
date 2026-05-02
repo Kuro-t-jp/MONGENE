@@ -23,9 +23,7 @@ export const EXAM_LEVEL_CONFIGS: ExamLevelConfig[] = [
   { id: 'high_exam',     label: '高校定期考査', emoji: '📚', description: '教科書内容の理解・応用' },
   { id: 'csat',          label: '共通テスト',   emoji: '🎯', description: '思考力・読解力・図表解析' },
   { id: 'private_univ',  label: '私大入試',     emoji: '🏛️', description: '正確な知識と応用力' },
-  { id: 'national_univ', label: '国公立入試',   emoji: '🎓', description: '記述・論述・高度な思考力' },
-  { id: 'grad_school',   label: '大学院入試',   emoji: '🔬', description: '専門的な分析・研究理解' },
-  { id: 'qualification', label: '資格試験',     emoji: '📜', description: '実務・専門知識' },
+  { id: 'national_univ', label: '国公立二次',   emoji: '🎓', description: '記述・論述・高度な思考力' },
   { id: 'custom',        label: 'カスタム',     emoji: '✏️', description: '自由に指定' },
 ]
 
@@ -51,8 +49,8 @@ export interface QuestionTypeConfig {
 export const QUESTION_TYPE_CONFIGS: QuestionTypeConfig[] = [
   { id: 'multiple_choice_4', label: '4択選択',  emoji: '🔵', description: '4つの選択肢から正答を選ぶ' },
   { id: 'multiple_choice_5', label: '5択選択',  emoji: '🟣', description: '5つの選択肢から正答を選ぶ' },
-  { id: 'fill_blank',        label: '穴埋め',   emoji: '📝', description: '空欄に適切な語句を入れる' },
-  { id: 'short_answer',      label: '短答記述', emoji: '✍️', description: '1〜3文で簡潔に答える' },
+  { id: 'fill_blank',        label: '空欄補充', emoji: '📋', description: '空欄に適切な語句を入れる' },
+  { id: 'short_answer',      label: '短答記述', emoji: '🖊️', description: '1〜3文で簡潔に答える' },
   { id: 'essay',             label: '論述',     emoji: '📄', description: '4文以上で論理的に答える' },
   { id: 'true_false',        label: '正誤判定', emoji: '⭕', description: '正しいか誤りかを判断する' },
   { id: 'calculation',       label: '計算問題', emoji: '🔢', description: '計算・数式を用いて解く' },
@@ -113,6 +111,8 @@ export interface PassageSet {
   id: string
   title: string
   passage: string
+  figureType?: string
+  questionMode?: 'passage' | 'figure'
   level: ExamLevel
   subject: string
   questions: SubQuestion[]
@@ -124,7 +124,7 @@ export interface PassageSet {
 //  生成設定
 // ─────────────────────────────────────────────
 export interface GenerationConfig {
-  generationMode: 'individual' | 'passage'
+  generationMode: 'individual' | 'passage' | 'figure'
   levels: ExamLevel[]
   customLevel: string
   questionTypes: QuestionType[]
@@ -321,6 +321,7 @@ export interface AppSettings {
   geminiModel: string
   googleClientId: string
   googleClientSecret: string
+  seibuturagBaseUrl: string
 }
 
 export interface GoogleAuthState {
