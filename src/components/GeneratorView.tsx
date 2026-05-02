@@ -1,9 +1,10 @@
 import { useState } from 'react'
 import { useAppStore } from '../store/appStore'
-import { EXAM_LEVEL_CONFIGS, QUESTION_TYPE_CONFIGS, CURRICULUM_STAGE_CONFIGS } from '../types'
-import type { ExamLevel, QuestionType, CurriculumStage } from '../types'
+import { EXAM_LEVEL_CONFIGS, QUESTION_TYPE_CONFIGS, CURRICULUM_STAGE_CONFIGS, CURRICULUM_SUBJECT_CONFIGS } from '../types'
+import type { ExamLevel, QuestionType, CurriculumStage, GenerationConfig } from '../types'
 import { generateQuestions, generatePassageSets, generateFigureSets } from '../lib/gemini'
 import { TEMPLATES } from '../lib/templates'
+import { GENERATION_MODES, inferAutoConfig } from '../lib/autoConfig'
 
 export default function GeneratorView() {
   const dataSources            = useAppStore((s) => s.dataSources)
@@ -26,6 +27,12 @@ export default function GeneratorView() {
 
   const selected = dataSources.filter((s) => s.selected)
   const mode = config.generationMode ?? 'individual'
+  const selectedText = selected.map((s) => `${s.name}\n${s.content}`).join('\n\n').slice(0, 12000)
+  const autoConfig = inferAutoConfig(config, selectedText)
+  const autoMode = GENERATION_MODES.find((m) => m.id === autoConfig.generationMode)
+  const selectedSubject = CURRICULUM_SUBJECT_CONFIGS.find((s) => s.id === config.subjectArea)
+  const selectedCourse = selectedSubject?.courses.find((c) => c.id === config.subjectCourse)
+  const selectedUnit = config.subjectUnit
 
   // ── Template ─────────────────────────────────────────────────────────────
   const applyTemplate = (templateId: string) => {
@@ -57,8 +64,39 @@ export default function GeneratorView() {
     }
   }
 
+  const updateSubjectArea = (subjectArea: string) => {
+    const subjectConf = CURRICULUM_SUBJECT_CONFIGS.find((s) => s.id === subjectArea)
+    updateConfig({
+      subjectArea,
+      subjectCourse: '',
+      subjectUnit: '',
+      subject: subjectConf?.label ?? '',
+      curriculumStage: subjectArea === 'rika' ? config.curriculumStage : 'none',
+    })
+  }
+
+  const updateSubjectCourse = (courseId: string) => {
+    const course = selectedSubject?.courses.find((c) => c.id === courseId)
+    const label = [selectedSubject?.label, course?.label].filter(Boolean).join(' / ')
+    updateConfig({
+      subjectCourse: courseId,
+      subjectUnit: '',
+      subject: label,
+    })
+  }
+
+  const updateSubjectUnit = (unit: string) => {
+    const label = [selectedSubject?.label, selectedCourse?.label, unit].filter(Boolean).join(' / ')
+    updateConfig({
+      subjectUnit: unit,
+      subject: label || unit,
+    })
+  }
+
   // ── Generate ─────────────────────────────────────────────────────────────
-  const handleGenerate = async () => {
+  const handleGenerate = async (overrideConfig?: GenerationConfig, label = '問題生成') => {
+    const effectiveConfig = overrideConfig ?? config
+    const effectiveMode = effectiveConfig.generationMode ?? 'individual'
     setError(null)
     setSuccess(null)
 
@@ -66,7 +104,7 @@ export default function GeneratorView() {
       setError('設定画面でGemini APIキーを設定してください。')
       return
     }
-    if (selected.length === 0 && config.curriculumStage === 'none') {
+    if (selected.length === 0 && effectiveConfig.curriculumStage === 'none') {
       setError('データソースを選択するか、学習指導要領の単元を選択してください。')
       return
     }
@@ -74,28 +112,28 @@ export default function GeneratorView() {
     setIsGenerating(true)
     try {
       const srcs = selected.map((s) => ({ name: s.name, content: s.content }))
-      if (mode === 'passage') {
+      if (effectiveMode === 'passage') {
         const sets = await generatePassageSets(
-          settings.geminiApiKey, settings.geminiModel, srcs, config, setGenerationProgress
+          settings.geminiApiKey, settings.geminiModel, srcs, effectiveConfig, setGenerationProgress
         )
         appendPassageSets(sets)
         const totalQ = sets.reduce((a, s) => a + s.questions.length, 0)
-        setSuccess(`${sets.length}セット（計${totalQ}問）の長文問題を生成しました！`)
+        setSuccess(`${label}: ${sets.length}セット（計${totalQ}問）の長文問題を生成しました！`)
         setQuestionListTab('passage')
-      } else if (mode === 'figure') {
+      } else if (effectiveMode === 'figure') {
         const sets = await generateFigureSets(
-          settings.geminiApiKey, settings.geminiModel, srcs, config, setGenerationProgress
+          settings.geminiApiKey, settings.geminiModel, srcs, effectiveConfig, setGenerationProgress
         )
         appendPassageSets(sets)
         const totalQ = sets.reduce((a, s) => a + s.questions.length, 0)
-        setSuccess(`${sets.length}セット（計${totalQ}問）の図解問題を生成しました！`)
+        setSuccess(`${label}: ${sets.length}セット（計${totalQ}問）の図解問題を生成しました！`)
         setQuestionListTab('passage')
       } else {
         const questions = await generateQuestions(
-          settings.geminiApiKey, settings.geminiModel, srcs, config, setGenerationProgress
+          settings.geminiApiKey, settings.geminiModel, srcs, effectiveConfig, setGenerationProgress
         )
         appendQuestions(questions)
-        setSuccess(`${questions.length}問の問題を生成しました！`)
+        setSuccess(`${label}: ${questions.length}問の問題を生成しました！`)
         setQuestionListTab('individual')
       }
       setTimeout(() => setActiveView('questions'), 1400)
@@ -109,6 +147,10 @@ export default function GeneratorView() {
 
   const hasCurriculum = config.curriculumStage !== 'none'
   const canGenerate = (selected.length > 0 || hasCurriculum) && !!settings.geminiApiKey && !isGenerating
+  const handleAutoGenerate = () => {
+    updateConfig(autoConfig)
+    void handleGenerate(autoConfig, 'おまかせ生成')
+  }
 
   // ── Styles ────────────────────────────────────────────────────────────────
   const card: React.CSSProperties = {
@@ -132,14 +174,79 @@ export default function GeneratorView() {
 
   return (
     <div style={{ height: '100%', overflowY: 'auto' }}>
-      <div style={{ maxWidth: 740, margin: '0 auto', padding: '36px 32px', display: 'flex', flexDirection: 'column', gap: 20 }}>
+      <div style={{ maxWidth: 1040, margin: '0 auto', padding: '34px 32px 48px', display: 'flex', flexDirection: 'column', gap: 20 }}>
 
         {/* Header */}
         <div>
           <h2 style={{ fontSize: 22, fontWeight: 700, margin: 0 }}>問題生成</h2>
           <p style={{ marginTop: 6, color: 'var(--color-text-muted)', fontSize: 14 }}>
-            AIが学習資料から試験問題を自動生成します。
+            条件を細かく指定しても、素材から自動推定してすぐ作っても大丈夫です。
           </p>
+        </div>
+
+        {/* Guided status */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
+          {[
+            {
+              title: '素材',
+              value: selected.length > 0 ? `${selected.length}件選択中` : hasCurriculum ? '単元から生成' : '未選択',
+              ok: selected.length > 0 || hasCurriculum,
+              note: selected.length > 0 ? `${selected.reduce((a, s) => a + s.content.length, 0).toLocaleString()}文字` : '素材画面または単元を指定',
+            },
+            {
+              title: 'API',
+              value: settings.geminiApiKey ? '設定済み' : '未設定',
+              ok: !!settings.geminiApiKey,
+              note: settings.geminiModel,
+            },
+            {
+              title: '推定形式',
+              value: autoMode ? `${autoMode.icon} ${autoMode.label}` : '未判定',
+              ok: true,
+              note: autoMode?.note ?? '',
+            },
+          ].map((item) => (
+            <div
+              key={item.title}
+              style={{
+                ...card,
+                padding: '16px 18px',
+                borderColor: item.ok ? 'var(--color-border-strong)' : 'rgba(245,158,11,0.35)',
+                background: item.ok ? 'var(--color-surface-2)' : 'rgba(245,158,11,0.06)',
+              }}
+            >
+              <div style={{ fontSize: 11, fontWeight: 800, color: 'var(--color-text-dim)', marginBottom: 5 }}>{item.title}</div>
+              <div style={{ fontSize: 15, fontWeight: 800, color: item.ok ? 'var(--color-text)' : '#fbbf24' }}>{item.value}</div>
+              <div style={{ fontSize: 11, color: 'var(--color-text-dim)', marginTop: 4, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.note}</div>
+            </div>
+          ))}
+        </div>
+
+        {/* Auto path */}
+        <div style={{ ...card, display: 'grid', gridTemplateColumns: '1fr auto', gap: 16, alignItems: 'center', background: 'rgba(16,185,129,0.07)', borderColor: 'rgba(16,185,129,0.25)' }}>
+          <div>
+            <p style={{ margin: 0, fontSize: 15, fontWeight: 800, color: '#6ee7b7' }}>おまかせで確実に作る</p>
+            <p style={{ margin: '5px 0 0', fontSize: 12, color: 'var(--color-text-muted)', lineHeight: 1.6 }}>
+              素材の量や「図・実験・本文」などの手がかりから、問題形式・問題数・追加指示を自動で整えて生成します。
+            </p>
+          </div>
+          <button
+            onClick={handleAutoGenerate}
+            disabled={!canGenerate}
+            style={{
+              padding: '13px 20px',
+              borderRadius: 11,
+              border: 'none',
+              cursor: canGenerate ? 'pointer' : 'not-allowed',
+              background: canGenerate ? 'linear-gradient(135deg, #10b981 0%, #059669 100%)' : 'var(--color-surface-3)',
+              color: canGenerate ? '#fff' : 'var(--color-text-dim)',
+              fontSize: 14,
+              fontWeight: 900,
+              whiteSpace: 'nowrap',
+            }}
+          >
+            ✨ おまかせ生成
+          </button>
         </div>
 
         {/* ── Template Selector ────────────────────────────────────────────── */}
@@ -384,6 +491,123 @@ export default function GeneratorView() {
           </div>
         </div>
 
+        {/* ── Subject & Unit ──────────────────────────────────────────────── */}
+        <div style={card}>
+          <p style={sectionTitle}>
+            学習指導要領の教科・科目
+            <span style={subNote}>（教科 → 科目 → 内容候補の順に選択）</span>
+          </p>
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
+            {CURRICULUM_SUBJECT_CONFIGS.map((subject) => {
+              const active = config.subjectArea === subject.id
+              return (
+                <button
+                  key={subject.id}
+                  onClick={() => updateSubjectArea(subject.id)}
+                  title={subject.description}
+                  style={{
+                    padding: '11px 12px',
+                    borderRadius: 10,
+                    border: `1px solid ${active ? 'var(--color-primary)' : 'var(--color-border)'}`,
+                    background: active ? 'rgba(99,102,241,0.14)' : 'var(--color-surface-3)',
+                    color: active ? 'var(--color-primary-hover)' : 'var(--color-text)',
+                    cursor: 'pointer',
+                    textAlign: 'left',
+                    display: 'flex',
+                    gap: 8,
+                    alignItems: 'center',
+                  }}
+                >
+                  <span style={{ fontSize: 18 }}>{subject.emoji}</span>
+                  <span style={{ minWidth: 0 }}>
+                    <span style={{ display: 'block', fontSize: 13, fontWeight: 800 }}>{subject.label}</span>
+                    <span style={{ display: 'block', fontSize: 10, color: 'var(--color-text-dim)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {subject.description}
+                    </span>
+                  </span>
+                </button>
+              )
+            })}
+          </div>
+
+          {selectedSubject && (
+            <div style={{ marginTop: 14 }}>
+              <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--color-text-muted)', marginBottom: 8 }}>
+                {selectedSubject.emoji} {selectedSubject.label} の科目
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 7 }}>
+                {selectedSubject.courses.map((course) => {
+                  const active = config.subjectCourse === course.id
+                  return (
+                    <button
+                      key={course.id}
+                      onClick={() => updateSubjectCourse(course.id)}
+                      style={{
+                        padding: '9px 11px',
+                        borderRadius: 10,
+                        border: `1px solid ${active ? 'var(--color-primary)' : 'var(--color-border)'}`,
+                        background: active ? 'rgba(99,102,241,0.14)' : 'var(--color-surface-3)',
+                        color: active ? 'var(--color-primary-hover)' : 'var(--color-text-muted)',
+                        cursor: 'pointer',
+                        fontSize: 12,
+                        fontWeight: active ? 800 : 600,
+                        textAlign: 'left',
+                      }}
+                    >
+                      {course.label}
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+
+          {selectedCourse && (
+            <div style={{ marginTop: 14 }}>
+              <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--color-text-muted)', marginBottom: 8 }}>
+                {selectedCourse.label} の内容候補
+              </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                {selectedCourse.units.map((unit) => {
+                  const active = selectedUnit === unit
+                  return (
+                    <button
+                      key={unit}
+                      onClick={() => updateSubjectUnit(unit)}
+                      style={{
+                        padding: '6px 11px',
+                        borderRadius: 16,
+                        border: `1px solid ${active ? 'var(--color-primary)' : 'var(--color-border)'}`,
+                        background: active ? 'rgba(99,102,241,0.14)' : 'var(--color-surface-3)',
+                        color: active ? 'var(--color-primary-hover)' : 'var(--color-text-muted)',
+                        cursor: 'pointer',
+                        fontSize: 12,
+                        fontWeight: active ? 800 : 600,
+                      }}
+                    >
+                      {unit}
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+
+          <div style={{ marginTop: 14 }}>
+            <label style={{ ...sectionTitle, display: 'block', marginBottom: 7 }}>
+              詳細テーマ<span style={subNote}>（任意。例：苦手範囲や章名）</span>
+            </label>
+            <input
+              type="text"
+              placeholder="例：DNAの複製、三角関数の最大最小、江戸時代の文化"
+              value={config.subject}
+              onChange={(e) => updateConfig({ subject: e.target.value })}
+              style={input}
+            />
+          </div>
+        </div>
+
         {/* ── Curriculum Stage ─────────────────────────────────────────────── */}
         <div style={card}>
           <p style={sectionTitle}>
@@ -415,7 +639,7 @@ export default function GeneratorView() {
             return (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
                 <p style={{ fontSize: 11, color: 'var(--color-text-dim)', margin: 0 }}>
-                  小単元をクリックすると「科目・テーマ」欄に入力されます
+                  小単元をクリックすると「教科・単元」と詳細テーマに反映されます
                 </p>
                 {stageConf.chapters.map((ch) => (
                   <div key={ch.chapter}>
@@ -431,7 +655,7 @@ export default function GeneratorView() {
                       {ch.units.map((unit) => (
                         <button
                           key={unit}
-                          onClick={() => updateConfig({ subject: unit })}
+                          onClick={() => updateConfig({ subjectArea: 'rika', subjectCourse: config.curriculumStage === 'high_biology_basic' ? 'biology_basic' : 'biology', subjectUnit: unit, subject: `理科 / ${config.curriculumStage === 'high_biology_basic' ? '生物基礎' : '生物'} / ${unit}` })}
                           style={{
                             padding: '3px 10px', borderRadius: 12, cursor: 'pointer', fontSize: 11,
                             border: `1px solid ${config.subject === unit ? 'var(--color-primary)' : 'var(--color-border)'}`,
@@ -450,7 +674,7 @@ export default function GeneratorView() {
         </div>
 
         {/* ── Count & Subject ──────────────────────────────────────────────── */}
-        <div style={{ ...card, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
+        <div style={{ ...card, display: 'grid', gridTemplateColumns: mode === 'individual' ? '1fr' : '1fr', gap: 20 }}>
           {mode === 'individual' ? (
             <div>
               <label style={{ ...sectionTitle, display: 'block' }}>
@@ -504,18 +728,6 @@ export default function GeneratorView() {
               </div>
             </div>
           )}
-          <div>
-            <label style={{ ...sectionTitle, display: 'block' }}>
-              科目・テーマ<span style={subNote}>（任意）</span>
-            </label>
-            <input
-              type="text"
-              placeholder="例：日本史、微積分、英文法"
-              value={config.subject}
-              onChange={(e) => updateConfig({ subject: e.target.value })}
-              style={{ ...input, marginTop: 6 }}
-            />
-          </div>
         </div>
 
         {/* ── Additional Instructions ────────────────────────────────────── */}
@@ -554,7 +766,7 @@ export default function GeneratorView() {
 
         {/* Generate button */}
         <button
-          onClick={handleGenerate}
+          onClick={() => handleGenerate()}
           disabled={!canGenerate}
           style={{
             width: '100%', padding: '16px 24px', borderRadius: 14,

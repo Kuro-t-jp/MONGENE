@@ -4,9 +4,9 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { useAppStore } from '../store/appStore'
 import { parseFile, detectFileType } from '../lib/parsers'
-import { extractTextFromImage, generateQuestions, generatePassageSets } from '../lib/gemini'
+import { extractTextFromImage, generateQuestions, generatePassageSets, generateFigureSets } from '../lib/gemini'
 import { EXAM_LEVEL_CONFIGS, QUESTION_TYPE_CONFIGS, CURRICULUM_STAGE_CONFIGS } from '../types'
-import type { DataSourceType, ExamLevel, QuestionType, CurriculumStage } from '../types'
+import type { DataSourceType, ExamLevel, QuestionType, CurriculumStage, GenerationConfig } from '../types'
 import { TEMPLATES } from '../lib/templates'
 import { listSources, fetchSourceAsText, getSourceImages, imageUrlToBase64 } from '../lib/seibuturagClient'
 import type { SeibuturagSource } from '../lib/seibuturagClient'
@@ -30,6 +30,46 @@ const MODELS = [
   { id: 'gemini-2.5-flash-lite',          label: 'Gemini 2.5 Flash-Lite', note: '節約モード' },
   { id: 'gemini-1.5-pro',                 label: 'Gemini 1.5 Pro',        note: '最高精度' },
 ]
+
+const GENERATION_MODES = [
+  { id: 'individual', label: '一問一答', icon: '📝', note: '独立問題をまとめて作成' },
+  { id: 'passage',    label: '長文',     icon: '📖', note: 'リード文と複数設問' },
+  { id: 'figure',     label: '図解',     icon: '🔬', note: '図中ラベルを使う設問' },
+] as const
+
+function inferAutoConfig(base: GenerationConfig, selectedText: string): GenerationConfig {
+  const hint = `${base.subject}\n${base.additionalInstructions}\n${selectedText}`.toLowerCase()
+  const wantsFigure = /図|グラフ|表|模式|ラベル|構造|断面|系統|循環|フロー|過程|細胞|器官|figure|diagram|chart|graph/.test(hint)
+  const wantsPassage = selectedText.length > 3200 || /本文|長文|資料文|読解|考察|実験|会話文|article|passage/.test(hint)
+  const generationMode = wantsFigure ? 'figure' : wantsPassage ? 'passage' : 'individual'
+  const hasCurriculum = base.curriculumStage !== 'none'
+  const levels: ExamLevel[] = base.levels.length > 0 ? base.levels : (hasCurriculum ? ['high_exam', 'csat'] : ['high_exam'])
+  const questionTypes: QuestionType[] =
+    generationMode === 'figure'
+      ? ['multiple_choice_4', 'fill_blank', 'short_answer']
+      : generationMode === 'passage'
+        ? ['multiple_choice_4', 'short_answer', 'essay']
+        : selectedText.length > 1400
+          ? ['multiple_choice_4', 'fill_blank', 'short_answer']
+          : ['fill_blank', 'short_answer', 'true_false']
+
+  return {
+    ...base,
+    generationMode,
+    levels,
+    questionTypes,
+    count: generationMode === 'individual' ? (selectedText.length > 2500 ? 15 : 10) : base.count,
+    passageCount: generationMode === 'figure' ? 2 : generationMode === 'passage' ? 1 : base.passageCount,
+    questionsPerPassage: generationMode === 'figure' ? 4 : generationMode === 'passage' ? 5 : base.questionsPerPassage,
+    additionalInstructions: base.additionalInstructions || (
+      generationMode === 'figure'
+        ? '重要概念を図のラベルと対応させ、図を見ないと解けない設問を優先してください。'
+        : generationMode === 'passage'
+          ? '資料文の内容を根拠にして答える設問を中心に、知識確認と考察問題を混ぜてください。'
+          : '重要語句の確認だけでなく、概念の理解を問う問題も混ぜてください。'
+    ),
+  }
+}
 
 function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
@@ -144,6 +184,7 @@ export default function Sidebar() {
   const [genError,        setGenError]        = useState<string | null>(null)
   const [genSuccess,      setGenSuccess]      = useState<string | null>(null)
   const [showKey,         setShowKey]         = useState(false)
+  const [autoGenerateOnImport, setAutoGenerateOnImport] = useState(false)
 
   // ── SEIBUTURAG ────────────────────────────────────────────────────────────
   const [showRag,         setShowRag]         = useState(false)
@@ -158,8 +199,13 @@ export default function Sidebar() {
   // ── Templates ─────────────────────────────────────────────────────────────
   const [appliedTemplate, setAppliedTemplate] = useState<string | null>(null)
 
+  // ── Generation UI mode ────────────────────────────────────────────────────
+  type GenUiMode = 'auto' | 'template' | 'manual'
+  const [genUiMode, setGenUiMode] = useState<GenUiMode>('auto')
+
   // ── URL capture event ────────────────────────────────────────────────────
   useEffect(() => {
+    if (!(window as any).__TAURI_INTERNALS__) return
     let cancelled = false
     let unlisten: (() => void) | undefined
     listen<{ title: string; content: string }>('content-captured', ({ payload }) => {
@@ -339,6 +385,9 @@ export default function Sidebar() {
   const mode          = config.generationMode ?? 'individual'
   const hasCurriculum = config.curriculumStage !== 'none'
   const canGenerate   = (selected.length > 0 || hasCurriculum) && !!settings.geminiApiKey && !isGenerating
+  const selectedText  = selected.map((s) => `${s.name}\n${s.content}`).join('\n\n').slice(0, 12000)
+  const autoConfig    = inferAutoConfig(config, selectedText)
+  const autoModeMeta  = GENERATION_MODES.find((m) => m.id === autoConfig.generationMode)
 
   const toggleLevel = (level: ExamLevel) => {
     const cur = config.levels
@@ -360,31 +409,44 @@ export default function Sidebar() {
     }
   }
 
-  const handleGenerate = async () => {
+  const handleGenerate = async (overrideConfig?: GenerationConfig, sourceLabel = '問題') => {
+    const effectiveConfig = overrideConfig ?? config
+    const effectiveMode = effectiveConfig.generationMode ?? 'individual'
     setGenError(null)
     setGenSuccess(null)
     if (!settings.geminiApiKey) { setGenError('APIキーを設定してください'); return }
-    if (selected.length === 0 && config.curriculumStage === 'none') { setGenError('データソースを選択するか単元を選んでください'); return }
+    if (selected.length === 0 && effectiveConfig.curriculumStage === 'none') { setGenError('データソースを選択するか単元を選んでください'); return }
     setIsGenerating(true)
     try {
-      if (mode === 'passage') {
+      const srcs = selected.map((s) => ({ name: s.name, content: s.content }))
+      if (effectiveMode === 'passage') {
         const sets = await generatePassageSets(
           settings.geminiApiKey, settings.geminiModel,
-          selected.map((s) => ({ name: s.name, content: s.content })),
-          config, setGenerationProgress,
+          srcs,
+          effectiveConfig, setGenerationProgress,
         )
         appendPassageSets(sets)
         const totalQ = sets.reduce((a, s) => a + s.questions.length, 0)
-        setGenSuccess(`${sets.length}セット（計${totalQ}問）生成完了！`)
+        setGenSuccess(`${sourceLabel}: ${sets.length}セット（計${totalQ}問）生成完了！`)
+        setQuestionListTab('passage')
+      } else if (effectiveMode === 'figure') {
+        const sets = await generateFigureSets(
+          settings.geminiApiKey, settings.geminiModel,
+          srcs,
+          effectiveConfig, setGenerationProgress,
+        )
+        appendPassageSets(sets)
+        const totalQ = sets.reduce((a, s) => a + s.questions.length, 0)
+        setGenSuccess(`${sourceLabel}: 図解${sets.length}セット（計${totalQ}問）生成完了！`)
         setQuestionListTab('passage')
       } else {
         const qs = await generateQuestions(
           settings.geminiApiKey, settings.geminiModel,
-          selected.map((s) => ({ name: s.name, content: s.content })),
-          config, setGenerationProgress,
+          srcs,
+          effectiveConfig, setGenerationProgress,
         )
         appendQuestions(qs)
-        setGenSuccess(`${qs.length}問生成完了！`)
+        setGenSuccess(`${sourceLabel}: ${qs.length}問生成完了！`)
         setQuestionListTab('individual')
       }
     } catch (err) {
@@ -394,6 +456,25 @@ export default function Sidebar() {
       setGenerationProgress('')
     }
   }
+
+  const handleAutoGenerate = () => {
+    updateConfig(autoConfig)
+    void handleGenerate(autoConfig, 'おまかせ生成')
+  }
+
+  const autoSourceSignature = selected.map((s) => `${s.id}:${s.content.length}`).join('|')
+  const lastAutoSignatureRef = useRef('')
+  useEffect(() => {
+    if (!autoGenerateOnImport || !settings.geminiApiKey || isGenerating) return
+    if (!autoSourceSignature || autoSourceSignature === lastAutoSignatureRef.current) return
+    lastAutoSignatureRef.current = autoSourceSignature
+    const timer = window.setTimeout(() => {
+      const nextConfig = inferAutoConfig(config, selectedText)
+      updateConfig(nextConfig)
+      void handleGenerate(nextConfig, '自動生成')
+    }, 700)
+    return () => window.clearTimeout(timer)
+  }, [autoGenerateOnImport, autoSourceSignature, settings.geminiApiKey, isGenerating, selectedText])
 
   // ── Shared styles ────────────────────────────────────────────────────────
   const inp: React.CSSProperties = {
@@ -694,248 +775,373 @@ export default function Sidebar() {
           )}
         </Section>
 
-        {/* ══ テンプレート ══════════════════════════════════════════════════ */}
-        <Section title="テンプレート" emoji="📋" defaultOpen>
-          <div style={{ fontSize: 11, color: 'var(--color-text-dim)', marginBottom: 8, lineHeight: 1.5 }}>
-            選ぶと問題形式・レベル・問題数が自動設定されます。
+        {/* ══ 問題生成 ═════════════════════════════════════════════════════ */}
+        <Section title="問題生成" emoji="⚡" defaultOpen>
+
+          {/* ── データソース状態（タブの上・常時表示） ────────────────────── */}
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', borderRadius: 8, marginBottom: 12,
+            background: (selected.length > 0 || hasCurriculum) ? 'rgba(16,185,129,0.08)' : 'rgba(239,68,68,0.06)',
+            border: `1px solid ${(selected.length > 0 || hasCurriculum) ? 'rgba(16,185,129,0.3)' : 'rgba(239,68,68,0.2)'}`,
+          }}>
+            <span style={{ fontSize: 16 }}>
+              {selected.length > 0 ? '✅' : hasCurriculum ? '📚' : '⚠️'}
+            </span>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: (selected.length > 0 || hasCurriculum) ? '#6ee7b7' : '#f87171' }}>
+                {selected.length > 0 ? `${selected.length}件のデータを使用` : hasCurriculum ? '単元情報から生成' : 'データソース未選択'}
+              </div>
+              <div style={{ fontSize: 10, color: 'var(--color-text-dim)', marginTop: 1 }}>
+                {selected.length > 0
+                  ? `合計 ${selected.reduce((a, s) => a + s.content.length, 0).toLocaleString()}文字`
+                  : hasCurriculum ? '上のデータソースから素材を追加すると精度が上がります'
+                  : '上の「データソース」から素材を追加してください'}
+              </div>
+            </div>
           </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-            {TEMPLATES.map((tpl) => {
-              const active = appliedTemplate === tpl.id
+
+          {/* ── モード選択タブ ────────────────────────────────────────────── */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 4, marginBottom: 14 }}>
+            {([
+              { id: 'auto',     label: 'お任せ',   emoji: '✨', color: '#10b981', bg: 'rgba(16,185,129,0.12)', border: 'rgba(16,185,129,0.4)' },
+              { id: 'template', label: 'テンプレ', emoji: '📋', color: '#818cf8', bg: 'rgba(99,102,241,0.12)', border: 'rgba(99,102,241,0.4)' },
+              { id: 'manual',   label: '詳細設定', emoji: '⚙️', color: '#94a3b8', bg: 'rgba(148,163,184,0.12)', border: 'rgba(148,163,184,0.35)' },
+            ] as const).map((m) => {
+              const active = genUiMode === m.id
               return (
                 <button
-                  key={tpl.id}
-                  onClick={() => applyTemplate(tpl.id)}
+                  key={m.id}
+                  onClick={() => setGenUiMode(m.id)}
                   style={{
-                    ...btn,
-                    display: 'flex', alignItems: 'flex-start', gap: 8,
-                    padding: '8px 10px', borderRadius: 8,
-                    background: active ? 'rgba(99,102,241,0.14)' : 'var(--color-surface-3)',
-                    border: `1px solid ${active ? 'var(--color-primary)' : 'var(--color-border)'}`,
-                    color: active ? 'var(--color-primary-hover)' : 'var(--color-text-muted)',
-                    textAlign: 'left',
+                    padding: '10px 4px', border: `2px solid ${active ? m.border : 'var(--color-border)'}`,
+                    borderRadius: 10, cursor: 'pointer',
+                    background: active ? m.bg : 'transparent',
+                    transition: 'all 0.15s',
+                    display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3,
                   }}
                 >
-                  <span style={{ fontSize: 16, flexShrink: 0, lineHeight: 1.3 }}>{tpl.emoji}</span>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 11, fontWeight: 700, marginBottom: 1 }}>{tpl.name}</div>
-                    <div style={{ fontSize: 10, opacity: 0.7, lineHeight: 1.4 }}>{tpl.description}</div>
-                  </div>
-                  {active && (
-                    <span style={{ fontSize: 10, padding: '1px 5px', borderRadius: 8, background: 'rgba(99,102,241,0.2)', color: 'var(--color-primary)', fontWeight: 700, flexShrink: 0 }}>
-                      適用中
-                    </span>
-                  )}
+                  <span style={{ fontSize: 18 }}>{m.emoji}</span>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: active ? m.color : 'var(--color-text-dim)' }}>
+                    {m.label}
+                  </span>
                 </button>
               )
             })}
           </div>
-        </Section>
 
-        {/* ══ 生成設定 ═════════════════════════════════════════════════════ */}
-        <Section title="生成設定" emoji="⚡" defaultOpen>
-
-          {/* Mode toggle */}
-          <div style={{ display: 'flex', borderRadius: 8, overflow: 'hidden', border: '1px solid var(--color-border)', marginBottom: 12 }}>
-            {([
-              { id: 'individual', label: '📝 一問一答' },
-              { id: 'passage',    label: '📖 長文問題' },
-            ] as const).map((m) => {
-              const active = mode === m.id
-              return (
-                <button
-                  key={m.id}
-                  onClick={() => updateConfig({ generationMode: m.id })}
-                  style={{
-                    flex: 1, padding: '8px 4px', border: 'none', cursor: 'pointer',
-                    fontSize: 11, fontWeight: 600,
-                    background: active ? 'linear-gradient(135deg, #6366f1 0%, #7c3aed 100%)' : 'transparent',
-                    color: active ? '#fff' : 'var(--color-text-muted)',
-                    transition: 'all 0.15s',
-                  }}
-                >{m.label}</button>
-              )
-            })}
-          </div>
-
-          {/* Source status */}
-          <div style={{
-            display: 'flex', alignItems: 'center', gap: 6, padding: '7px 10px', borderRadius: 8, marginBottom: 12,
-            background: (selected.length > 0 || hasCurriculum) ? 'rgba(16,185,129,0.07)' : 'rgba(239,68,68,0.06)',
-            border: `1px solid ${(selected.length > 0 || hasCurriculum) ? 'rgba(16,185,129,0.3)' : 'rgba(239,68,68,0.25)'}`,
-          }}>
-            <span style={{ fontSize: 14 }}>
-              {selected.length > 0 ? '✅' : hasCurriculum ? '📚' : '⚠️'}
-            </span>
-            <div style={{ flex: 1, fontSize: 11, color: 'var(--color-text-muted)' }}>
-              {selected.length > 0
-                ? `${selected.length}件選択中`
-                : hasCurriculum
-                ? '単元から生成'
-                : 'データソース未選択'}
-            </div>
-          </div>
-
-          {/* Exam levels */}
-          <div style={{ marginBottom: 12 }}>
-            <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--color-text-muted)', marginBottom: 5 }}>
-              対象レベル <span style={{ fontWeight: 400 }}>(複数可)</span>
-            </div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 4 }}>
-              {EXAM_LEVEL_CONFIGS.map((lv) => {
-                const active = config.levels.includes(lv.id)
-                return (
-                  <button
-                    key={lv.id}
-                    onClick={() => toggleLevel(lv.id)}
-                    title={lv.description}
-                    style={{
-                      display: 'flex', alignItems: 'center', gap: 4, padding: '5px 7px',
-                      borderRadius: 8, cursor: 'pointer', fontSize: 11, fontWeight: 600,
-                      border: `1px solid ${active ? 'var(--color-primary)' : 'var(--color-border)'}`,
-                      background: active ? 'rgba(99,102,241,0.14)' : 'var(--color-surface-3)',
-                      color: active ? 'var(--color-primary-hover)' : 'var(--color-text-muted)',
-                      transition: 'all 0.12s',
-                    }}
-                  >
-                    <span style={{ fontSize: 13 }}>{lv.emoji}</span>
-                    <span style={{ fontSize: 10 }}>{lv.label}</span>
-                  </button>
-                )
-              })}
-            </div>
-            {config.levels.includes('custom') && (
-              <input type="text" placeholder="カスタムレベルを入力" value={config.customLevel} onChange={(e) => updateConfig({ customLevel: e.target.value })} style={{ ...inp, marginTop: 6 }} />
-            )}
-          </div>
-
-          {/* Question types */}
-          <div style={{ marginBottom: 12 }}>
-            <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--color-text-muted)', marginBottom: 5 }}>
-              問題形式 <span style={{ fontWeight: 400 }}>(複数可)</span>
-            </div>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-              {QUESTION_TYPE_CONFIGS.map((qt) => {
-                const active = config.questionTypes.includes(qt.id)
-                return (
-                  <button
-                    key={qt.id}
-                    onClick={() => toggleType(qt.id)}
-                    title={qt.description}
-                    style={{
-                      display: 'flex', alignItems: 'center', gap: 4,
-                      padding: '4px 10px', borderRadius: 20, cursor: 'pointer',
-                      fontSize: 11, fontWeight: 600,
-                      border: `1px solid ${active ? 'var(--color-primary)' : 'var(--color-border)'}`,
-                      background: active ? 'linear-gradient(135deg, #6366f1 0%, #7c3aed 100%)' : 'var(--color-surface-3)',
-                      color: active ? '#fff' : 'var(--color-text-muted)',
-                      transition: 'all 0.12s',
-                    }}
-                  >
-                    <span>{qt.emoji}</span><span>{qt.label}</span>
-                  </button>
-                )
-              })}
-            </div>
-          </div>
-
-          {/* Count sliders */}
-          <div style={{ marginBottom: 12 }}>
-            {mode === 'individual' ? (
-              <>
-                <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--color-text-muted)', marginBottom: 4 }}>
-                  問題数：<span style={{ color: 'var(--color-primary)' }}>{config.count}問</span>
+          {/* ══════════════ ✨ お任せモード ══════════════ */}
+          {genUiMode === 'auto' && (
+            <div style={{ borderRadius: 10, border: '1px solid rgba(16,185,129,0.25)', overflow: 'hidden', marginBottom: 12 }}>
+              <div style={{ padding: '10px 12px', background: 'rgba(16,185,129,0.08)', borderBottom: '1px solid rgba(16,185,129,0.15)' }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: '#34d399' }}>✨ お任せ自動生成</div>
+                <div style={{ fontSize: 10, color: 'var(--color-text-dim)', marginTop: 2 }}>
+                  素材を読んでAIが形式・難易度・問題数を自動判断します
                 </div>
-                <input type="range" min={1} max={50} step={1} value={config.count} onChange={(e) => updateConfig({ count: Number(e.target.value) })} style={{ width: '100%' }} />
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: 'var(--color-text-dim)' }}>
-                  <span>1</span><span>25</span><span>50</span>
+              </div>
+              <div style={{ padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+                {/* AI判定プレビュー */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderRadius: 7, background: 'var(--color-surface-3)' }}>
+                  <span style={{ fontSize: 18 }}>{autoModeMeta?.icon ?? '📝'}</span>
+                  <div>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--color-text)' }}>
+                      {autoModeMeta ? autoModeMeta.label : '一問一答'} モードで生成
+                    </div>
+                    <div style={{ fontSize: 10, color: 'var(--color-text-dim)' }}>
+                      {autoModeMeta?.note ?? '独立した問題をまとめて作成'}
+                    </div>
+                  </div>
                 </div>
-              </>
-            ) : (
-              <>
-                <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--color-text-muted)', marginBottom: 4 }}>
-                  長文セット数：<span style={{ color: 'var(--color-primary)' }}>{config.passageCount ?? 2}セット</span>
+                {/* 科目入力 */}
+                <div>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--color-text-muted)', marginBottom: 4 }}>科目・テーマ（任意）</div>
+                  <input
+                    type="text"
+                    placeholder="例：細胞の構造と機能"
+                    value={config.subject}
+                    onChange={(e) => updateConfig({ subject: e.target.value })}
+                    style={inp}
+                  />
                 </div>
-                <input type="range" min={1} max={5} step={1} value={config.passageCount ?? 2} onChange={(e) => updateConfig({ passageCount: Number(e.target.value) })} style={{ width: '100%' }} />
-                <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--color-text-muted)', margin: '8px 0 4px' }}>
-                  各セット設問数：<span style={{ color: 'var(--color-primary)' }}>{config.questionsPerPassage ?? 5}問</span>
-                </div>
-                <input type="range" min={2} max={10} step={1} value={config.questionsPerPassage ?? 5} onChange={(e) => updateConfig({ questionsPerPassage: Number(e.target.value) })} style={{ width: '100%' }} />
-              </>
-            )}
-          </div>
-
-          {/* Subject */}
-          <div style={{ marginBottom: 12 }}>
-            <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--color-text-muted)', marginBottom: 4 }}>科目・テーマ（任意）</div>
-            <input type="text" placeholder="例：日本史、微積分、英文法" value={config.subject} onChange={(e) => updateConfig({ subject: e.target.value })} style={inp} />
-          </div>
-
-          {/* Curriculum */}
-          <div style={{ marginBottom: 12 }}>
-            <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--color-text-muted)', marginBottom: 5 }}>学習指導要領（任意）</div>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-              {CURRICULUM_STAGE_CONFIGS.map((s) => {
-                const active = (config.curriculumStage ?? 'none') === s.id
-                return (
-                  <button
-                    key={s.id}
-                    onClick={() => updateConfig({ curriculumStage: s.id as CurriculumStage })}
-                    style={{
-                      padding: '4px 10px', borderRadius: 14, cursor: 'pointer',
-                      fontSize: 10, fontWeight: active ? 700 : 400,
-                      border: `1px solid ${active ? 'var(--color-primary)' : 'var(--color-border)'}`,
-                      background: active ? 'rgba(99,102,241,0.14)' : 'var(--color-surface-3)',
-                      color: active ? 'var(--color-primary-hover)' : 'var(--color-text-muted)',
-                      transition: 'all 0.12s',
-                    }}
-                  >{s.emoji ? `${s.emoji} ` : ''}{s.label}</button>
-                )
-              })}
+                {/* 自動生成チェック */}
+                <label style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 10, color: 'var(--color-text-muted)', cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={autoGenerateOnImport}
+                    onChange={(e) => setAutoGenerateOnImport(e.target.checked)}
+                    style={{ accentColor: '#10b981' }}
+                  />
+                  素材を追加したら自動で生成する
+                </label>
+              </div>
             </div>
-            {(config.curriculumStage ?? 'none') !== 'none' && (() => {
-              const stageConf = CURRICULUM_STAGE_CONFIGS.find((s) => s.id === config.curriculumStage)
-              if (!stageConf || stageConf.chapters.length === 0) return null
-              return (
-                <div style={{ marginTop: 8, maxHeight: 150, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  <div style={{ fontSize: 10, color: 'var(--color-text-dim)' }}>小単元をクリックすると科目欄に入力されます</div>
-                  {stageConf.chapters.map((ch) => (
-                    <div key={ch.chapter}>
-                      <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--color-text-muted)', marginBottom: 3 }}>{ch.chapter}</div>
-                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
-                        {ch.units.map((unit) => (
-                          <button
-                            key={unit}
-                            onClick={() => updateConfig({ subject: unit })}
-                            style={{
-                              padding: '2px 7px', borderRadius: 10, cursor: 'pointer', fontSize: 10,
-                              border: `1px solid ${config.subject === unit ? 'var(--color-primary)' : 'var(--color-border)'}`,
-                              background: config.subject === unit ? 'rgba(99,102,241,0.14)' : 'var(--color-surface-3)',
-                              color: config.subject === unit ? 'var(--color-primary-hover)' : 'var(--color-text-muted)',
-                            }}
-                          >{unit}</button>
+          )}
+
+          {/* ══════════════ 📋 テンプレートモード ══════════════ */}
+          {genUiMode === 'template' && (
+            <div style={{ borderRadius: 10, border: '1px solid rgba(99,102,241,0.25)', overflow: 'hidden', marginBottom: 12 }}>
+              <div style={{ padding: '10px 12px', background: 'rgba(99,102,241,0.08)', borderBottom: '1px solid rgba(99,102,241,0.15)' }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: '#a5b4fc' }}>📋 テンプレート生成</div>
+                <div style={{ fontSize: 10, color: 'var(--color-text-dim)', marginTop: 2 }}>
+                  目的に合ったテンプレートを選ぶと設定が自動で入力されます
+                </div>
+              </div>
+              <div style={{ padding: '10px 12px' }}>
+                {/* 選択中テンプレートの詳細 */}
+                {appliedTemplate && (() => {
+                  const tpl = TEMPLATES.find((t) => t.id === appliedTemplate)
+                  if (!tpl) return null
+                  const tplMode = tpl.config.generationMode ?? 'individual'
+                  const tplModeMeta = GENERATION_MODES.find((m) => m.id === tplMode)
+                  return (
+                    <div style={{ marginBottom: 10, padding: '8px 10px', borderRadius: 8, background: 'rgba(99,102,241,0.12)', border: '1px solid rgba(99,102,241,0.3)' }}>
+                      <div style={{ fontSize: 12, fontWeight: 700, color: '#a5b4fc', marginBottom: 4 }}>
+                        {tpl.emoji} {tpl.name} を選択中
+                      </div>
+                      <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
+                        {tplModeMeta && (
+                          <span style={{ fontSize: 10, padding: '2px 7px', borderRadius: 8, background: 'rgba(99,102,241,0.15)', color: '#c4b5fd' }}>
+                            {tplModeMeta.icon} {tplModeMeta.label}
+                          </span>
+                        )}
+                        {(tpl.config.levels ?? []).map((l) => (
+                          <span key={l} style={{ fontSize: 10, padding: '2px 7px', borderRadius: 8, background: 'rgba(99,102,241,0.1)', color: '#a5b4fc' }}>{l}</span>
                         ))}
                       </div>
+                      <div style={{ fontSize: 10, color: 'var(--color-text-dim)', marginTop: 5 }}>{tpl.description}</div>
                     </div>
-                  ))}
+                  )
+                })()}
+                {/* テンプレート一覧 */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  {TEMPLATES.map((tpl) => {
+                    const active = appliedTemplate === tpl.id
+                    return (
+                      <button
+                        key={tpl.id}
+                        onClick={() => applyTemplate(tpl.id)}
+                        style={{
+                          ...btn,
+                          display: 'flex', alignItems: 'center', gap: 8,
+                          padding: '8px 10px', borderRadius: 8,
+                          background: active ? 'rgba(99,102,241,0.14)' : 'var(--color-surface-3)',
+                          border: `1px solid ${active ? '#818cf8' : 'var(--color-border)'}`,
+                          color: active ? '#c4b5fd' : 'var(--color-text-muted)',
+                        }}
+                      >
+                        <span style={{ fontSize: 16, flexShrink: 0 }}>{tpl.emoji}</span>
+                        <div style={{ flex: 1, minWidth: 0, textAlign: 'left' }}>
+                          <div style={{ fontSize: 11, fontWeight: 700 }}>{tpl.name}</div>
+                          <div style={{ fontSize: 9, opacity: 0.65, marginTop: 1 }}>{tpl.tags.join(' · ')}</div>
+                        </div>
+                        {active && <span style={{ fontSize: 14, color: '#818cf8', flexShrink: 0 }}>✓</span>}
+                      </button>
+                    )
+                  })}
                 </div>
-              )
-            })()}
-          </div>
+              </div>
+            </div>
+          )}
 
-          {/* Additional instructions */}
-          <div style={{ marginBottom: 14 }}>
-            <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--color-text-muted)', marginBottom: 4 }}>追加指示（任意）</div>
-            <textarea
-              rows={2}
-              placeholder="例：江戸時代の文化に焦点を当てて / 計算は整数のみ"
-              value={config.additionalInstructions}
-              onChange={(e) => updateConfig({ additionalInstructions: e.target.value })}
-              style={{ ...inp, resize: 'vertical', fontFamily: 'inherit' }}
-            />
-          </div>
+          {/* ══════════════ ⚙️ 詳細設定モード ══════════════ */}
+          {genUiMode === 'manual' && (
+            <div style={{ borderRadius: 10, border: '1px solid rgba(148,163,184,0.2)', overflow: 'hidden', marginBottom: 12 }}>
+              <div style={{ padding: '10px 12px', background: 'rgba(148,163,184,0.06)', borderBottom: '1px solid rgba(148,163,184,0.15)' }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: '#94a3b8' }}>⚙️ 詳細設定</div>
+                <div style={{ fontSize: 10, color: 'var(--color-text-dim)', marginTop: 2 }}>
+                  形式・レベル・問題数などを細かく指定できます
+                </div>
+              </div>
+              <div style={{ padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 12 }}>
 
-          {/* Errors / Success */}
+                {/* 問題タイプ (一問一答/長文/図解) */}
+                <div>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--color-text-muted)', marginBottom: 5 }}>問題の形式</div>
+                  <div style={{ display: 'flex', borderRadius: 8, overflow: 'hidden', border: '1px solid var(--color-border)' }}>
+                    {GENERATION_MODES.map((m) => {
+                      const active = mode === m.id
+                      return (
+                        <button
+                          key={m.id}
+                          onClick={() => updateConfig({ generationMode: m.id })}
+                          title={m.note}
+                          style={{
+                            flex: 1, padding: '8px 4px', border: 'none', cursor: 'pointer',
+                            fontSize: 11, fontWeight: 600, minWidth: 0,
+                            background: active ? 'linear-gradient(135deg, #6366f1 0%, #7c3aed 100%)' : 'transparent',
+                            color: active ? '#fff' : 'var(--color-text-muted)',
+                            transition: 'all 0.15s',
+                          }}
+                        >
+                          {m.icon} {m.label}
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+
+                {/* 対象レベル */}
+                <div>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--color-text-muted)', marginBottom: 5 }}>
+                    対象レベル <span style={{ fontWeight: 400 }}>(複数可)</span>
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 4 }}>
+                    {EXAM_LEVEL_CONFIGS.map((lv) => {
+                      const active = config.levels.includes(lv.id)
+                      return (
+                        <button
+                          key={lv.id}
+                          onClick={() => toggleLevel(lv.id)}
+                          title={lv.description}
+                          style={{
+                            display: 'flex', alignItems: 'center', gap: 4, padding: '5px 7px',
+                            borderRadius: 8, cursor: 'pointer', fontSize: 11, fontWeight: 600,
+                            border: `1px solid ${active ? 'var(--color-primary)' : 'var(--color-border)'}`,
+                            background: active ? 'rgba(99,102,241,0.14)' : 'var(--color-surface-3)',
+                            color: active ? 'var(--color-primary-hover)' : 'var(--color-text-muted)',
+                            transition: 'all 0.12s',
+                          }}
+                        >
+                          <span style={{ fontSize: 13 }}>{lv.emoji}</span>
+                          <span style={{ fontSize: 10 }}>{lv.label}</span>
+                        </button>
+                      )
+                    })}
+                  </div>
+                  {config.levels.includes('custom') && (
+                    <input type="text" placeholder="カスタムレベルを入力" value={config.customLevel} onChange={(e) => updateConfig({ customLevel: e.target.value })} style={{ ...inp, marginTop: 6 }} />
+                  )}
+                </div>
+
+                {/* 問題形式 */}
+                <div>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--color-text-muted)', marginBottom: 5 }}>
+                    問題形式 <span style={{ fontWeight: 400 }}>(複数可)</span>
+                  </div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                    {QUESTION_TYPE_CONFIGS.map((qt) => {
+                      const active = config.questionTypes.includes(qt.id)
+                      return (
+                        <button
+                          key={qt.id}
+                          onClick={() => toggleType(qt.id)}
+                          title={qt.description}
+                          style={{
+                            display: 'flex', alignItems: 'center', gap: 4,
+                            padding: '4px 10px', borderRadius: 20, cursor: 'pointer',
+                            fontSize: 11, fontWeight: 600,
+                            border: `1px solid ${active ? 'var(--color-primary)' : 'var(--color-border)'}`,
+                            background: active ? 'linear-gradient(135deg, #6366f1 0%, #7c3aed 100%)' : 'var(--color-surface-3)',
+                            color: active ? '#fff' : 'var(--color-text-muted)',
+                            transition: 'all 0.12s',
+                          }}
+                        >
+                          <span>{qt.emoji}</span><span>{qt.label}</span>
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+
+                {/* 問題数スライダー */}
+                <div>
+                  {mode === 'individual' ? (
+                    <>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--color-text-muted)', marginBottom: 4 }}>
+                        問題数：<span style={{ color: 'var(--color-primary)' }}>{config.count}問</span>
+                      </div>
+                      <input type="range" min={1} max={50} step={1} value={config.count} onChange={(e) => updateConfig({ count: Number(e.target.value) })} style={{ width: '100%' }} />
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: 'var(--color-text-dim)' }}>
+                        <span>1</span><span>25</span><span>50</span>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--color-text-muted)', marginBottom: 4 }}>
+                        {mode === 'figure' ? '図解セット数' : '長文セット数'}：<span style={{ color: 'var(--color-primary)' }}>{config.passageCount ?? 2}セット</span>
+                      </div>
+                      <input type="range" min={1} max={5} step={1} value={config.passageCount ?? 2} onChange={(e) => updateConfig({ passageCount: Number(e.target.value) })} style={{ width: '100%' }} />
+                      <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--color-text-muted)', margin: '8px 0 4px' }}>
+                        各セット設問数：<span style={{ color: 'var(--color-primary)' }}>{config.questionsPerPassage ?? 5}問</span>
+                      </div>
+                      <input type="range" min={2} max={10} step={1} value={config.questionsPerPassage ?? 5} onChange={(e) => updateConfig({ questionsPerPassage: Number(e.target.value) })} style={{ width: '100%' }} />
+                    </>
+                  )}
+                </div>
+
+                {/* 科目・テーマ */}
+                <div>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--color-text-muted)', marginBottom: 4 }}>科目・テーマ（任意）</div>
+                  <input type="text" placeholder="例：日本史、微積分、英文法" value={config.subject} onChange={(e) => updateConfig({ subject: e.target.value })} style={inp} />
+                </div>
+
+                {/* 学習指導要領 */}
+                <div>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--color-text-muted)', marginBottom: 5 }}>学習指導要領（任意）</div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                    {CURRICULUM_STAGE_CONFIGS.map((s) => {
+                      const active = (config.curriculumStage ?? 'none') === s.id
+                      return (
+                        <button
+                          key={s.id}
+                          onClick={() => updateConfig({ curriculumStage: s.id as CurriculumStage })}
+                          style={{
+                            padding: '4px 10px', borderRadius: 14, cursor: 'pointer',
+                            fontSize: 10, fontWeight: active ? 700 : 400,
+                            border: `1px solid ${active ? 'var(--color-primary)' : 'var(--color-border)'}`,
+                            background: active ? 'rgba(99,102,241,0.14)' : 'var(--color-surface-3)',
+                            color: active ? 'var(--color-primary-hover)' : 'var(--color-text-muted)',
+                            transition: 'all 0.12s',
+                          }}
+                        >{s.emoji ? `${s.emoji} ` : ''}{s.label}</button>
+                      )
+                    })}
+                  </div>
+                  {(config.curriculumStage ?? 'none') !== 'none' && (() => {
+                    const stageConf = CURRICULUM_STAGE_CONFIGS.find((s) => s.id === config.curriculumStage)
+                    if (!stageConf || stageConf.chapters.length === 0) return null
+                    return (
+                      <div style={{ marginTop: 8, maxHeight: 150, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                        <div style={{ fontSize: 10, color: 'var(--color-text-dim)' }}>小単元をクリックすると科目欄に入力されます</div>
+                        {stageConf.chapters.map((ch) => (
+                          <div key={ch.chapter}>
+                            <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--color-text-muted)', marginBottom: 3 }}>{ch.chapter}</div>
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
+                              {ch.units.map((unit) => (
+                                <button
+                                  key={unit}
+                                  onClick={() => updateConfig({ subject: unit })}
+                                  style={{
+                                    padding: '2px 7px', borderRadius: 10, cursor: 'pointer', fontSize: 10,
+                                    border: `1px solid ${config.subject === unit ? 'var(--color-primary)' : 'var(--color-border)'}`,
+                                    background: config.subject === unit ? 'rgba(99,102,241,0.14)' : 'var(--color-surface-3)',
+                                    color: config.subject === unit ? 'var(--color-primary-hover)' : 'var(--color-text-muted)',
+                                  }}
+                                >{unit}</button>
+                              ))}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )
+                  })()}
+                </div>
+
+                {/* 追加指示 */}
+                <div>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--color-text-muted)', marginBottom: 4 }}>追加指示（任意）</div>
+                  <textarea
+                    rows={2}
+                    placeholder="例：江戸時代の文化に焦点を当てて / 計算は整数のみ"
+                    value={config.additionalInstructions}
+                    onChange={(e) => updateConfig({ additionalInstructions: e.target.value })}
+                    style={{ ...inp, resize: 'vertical', fontFamily: 'inherit' }}
+                  />
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ── エラー / 成功 ─────────────────────────────────────────────── */}
           {genError && (
             <div style={{ fontSize: 11, color: '#f87171', padding: '5px 8px', background: 'rgba(239,68,68,0.08)', borderRadius: 6, marginBottom: 8 }}>
               ⚠️ {genError}
@@ -947,34 +1153,38 @@ export default function Sidebar() {
             </div>
           )}
 
-          {/* Generate button */}
+          {/* ── 生成ボタン ────────────────────────────────────────────────── */}
           <button
-            onClick={handleGenerate}
-            disabled={!canGenerate}
+            onClick={genUiMode === 'auto' ? handleAutoGenerate : () => handleGenerate()}
+            disabled={!canGenerate || (genUiMode === 'template' && !appliedTemplate)}
             style={{
               width: '100%', padding: '13px', borderRadius: 10, border: 'none',
-              cursor: canGenerate ? 'pointer' : 'not-allowed',
-              background: canGenerate
-                ? 'linear-gradient(135deg, #6366f1 0%, #7c3aed 100%)'
-                : 'var(--color-surface-3)',
-              color: canGenerate ? '#fff' : 'var(--color-text-dim)',
+              cursor: (canGenerate && (genUiMode !== 'template' || appliedTemplate)) ? 'pointer' : 'not-allowed',
+              background: !canGenerate || (genUiMode === 'template' && !appliedTemplate)
+                ? 'var(--color-surface-3)'
+                : genUiMode === 'auto'
+                  ? 'linear-gradient(135deg, #10b981 0%, #059669 100%)'
+                  : genUiMode === 'template'
+                    ? 'linear-gradient(135deg, #6366f1 0%, #7c3aed 100%)'
+                    : 'linear-gradient(135deg, #475569 0%, #334155 100%)',
+              color: (canGenerate && (genUiMode !== 'template' || appliedTemplate)) ? '#fff' : 'var(--color-text-dim)',
               fontSize: 13, fontWeight: 700,
-              boxShadow: canGenerate ? '0 4px 14px rgba(99,102,241,0.3)' : 'none',
+              boxShadow: canGenerate ? '0 4px 14px rgba(0,0,0,0.2)' : 'none',
               transition: 'all 0.2s',
               display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
             }}
           >
             {isGenerating ? (
               <>
-                <span style={{
-                  width: 14, height: 14,
-                  border: '2px solid rgba(255,255,255,0.4)', borderTopColor: '#fff',
-                  borderRadius: '50%', animation: 'spin 0.8s linear infinite', flexShrink: 0,
-                }} />
+                <span style={{ width: 14, height: 14, border: '2px solid rgba(255,255,255,0.4)', borderTopColor: '#fff', borderRadius: '50%', animation: 'spin 0.8s linear infinite', flexShrink: 0 }} />
                 {generationProgress || '生成中...'}
               </>
+            ) : genUiMode === 'auto' ? (
+              <>✨ おまかせ生成</>
+            ) : genUiMode === 'template' ? (
+              appliedTemplate ? <>⚡ このテンプレートで生成</> : <>← テンプレートを選んでください</>
             ) : (
-              <>⚡ 問題を生成する</>
+              <>⚙️ 設定で生成する</>
             )}
           </button>
           {!settings.geminiApiKey && (

@@ -24,6 +24,8 @@ export const EXAM_LEVEL_CONFIGS: ExamLevelConfig[] = [
   { id: 'csat',          label: '共通テスト',   emoji: '🎯', description: '思考力・読解力・図表解析' },
   { id: 'private_univ',  label: '私大入試',     emoji: '🏛️', description: '正確な知識と応用力' },
   { id: 'national_univ', label: '国公立二次',   emoji: '🎓', description: '記述・論述・高度な思考力' },
+  { id: 'grad_school',   label: '大学院入試',   emoji: '🔬', description: '専門的な分析・研究理解' },
+  { id: 'qualification', label: '資格試験',     emoji: '📜', description: '体系的な実務・専門知識' },
   { id: 'custom',        label: 'カスタム',     emoji: '✏️', description: '自由に指定' },
 ]
 
@@ -54,6 +56,139 @@ export const QUESTION_TYPE_CONFIGS: QuestionTypeConfig[] = [
   { id: 'essay',             label: '論述',     emoji: '📄', description: '4文以上で論理的に答える' },
   { id: 'true_false',        label: '正誤判定', emoji: '⭕', description: '正しいか誤りかを判断する' },
   { id: 'calculation',       label: '計算問題', emoji: '🔢', description: '計算・数式を用いて解く' },
+]
+
+// ─────────────────────────────────────────────
+//  学習指導要領 教科・科目
+// ─────────────────────────────────────────────
+export interface CurriculumCourseConfig {
+  id: string
+  label: string
+  units: string[]
+}
+
+export interface CurriculumSubjectConfig {
+  id: string
+  label: string
+  emoji: string
+  description: string
+  courses: CurriculumCourseConfig[]
+}
+
+export const CURRICULUM_SUBJECT_CONFIGS: CurriculumSubjectConfig[] = [
+  {
+    id: 'kokugo',
+    label: '国語',
+    emoji: '📖',
+    description: '現代の国語・言語文化など',
+    courses: [
+      { id: 'modern_japanese', label: '現代の国語', units: ['話すこと・聞くこと', '書くこと', '読むこと', '論理的な文章', '実用的な文章'] },
+      { id: 'language_culture', label: '言語文化', units: ['古典の世界', '近代以降の文章', '言葉の特徴', '伝統的な言語文化'] },
+      { id: 'logical_japanese', label: '論理国語', units: ['評論読解', '論理構成', '要約', '資料読解', '小論文'] },
+      { id: 'literary_japanese', label: '文学国語', units: ['小説', '随筆', '詩歌', '文学的表現', '作品比較'] },
+      { id: 'japanese_expression', label: '国語表現', units: ['文章表現', 'プレゼンテーション', '討論', '実用文'] },
+      { id: 'classical_exploration', label: '古典探究', units: ['古文読解', '古典文法', '漢文句法', '和歌・物語', '思想'] },
+    ],
+  },
+  {
+    id: 'chireki',
+    label: '地理歴史',
+    emoji: '🗺️',
+    description: '地理総合・歴史総合・探究科目',
+    courses: [
+      { id: 'geography_general', label: '地理総合', units: ['地図とGIS', '国際理解', '生活文化', '地球的課題', '防災'] },
+      { id: 'geography_advanced', label: '地理探究', units: ['自然環境', '資源と産業', '人口と都市', '地誌', '地域調査'] },
+      { id: 'history_general', label: '歴史総合', units: ['近代化', '国際秩序の変化', '大衆化', 'グローバル化'] },
+      { id: 'japanese_history', label: '日本史探究', units: ['原始・古代', '中世', '近世', '近現代', '史料読解'] },
+      { id: 'world_history', label: '世界史探究', units: ['諸地域の歴史', '交流と再編', '近代化', '二つの世界大戦', '現代世界'] },
+    ],
+  },
+  {
+    id: 'komin',
+    label: '公民',
+    emoji: '🏛️',
+    description: '公共・倫理・政治経済',
+    courses: [
+      { id: 'public', label: '公共', units: ['公共的な空間', '人間と社会', '法', '政治', '経済', '国際社会'] },
+      { id: 'ethics', label: '倫理', units: ['青年期', '源流思想', '日本思想', '西洋近現代思想', '現代の倫理的課題'] },
+      { id: 'politics_economics', label: '政治・経済', units: ['民主政治', '日本国憲法', '国際政治', '市場経済', '財政・金融', '国際経済'] },
+    ],
+  },
+  {
+    id: 'sugaku',
+    label: '数学',
+    emoji: '📐',
+    description: '数学I・A・II・B・III・C',
+    courses: [
+      { id: 'math_i', label: '数学I', units: ['数と式', '図形と計量', '二次関数', 'データの分析'] },
+      { id: 'math_a', label: '数学A', units: ['図形の性質', '場合の数と確率', '数学と人間の活動'] },
+      { id: 'math_ii', label: '数学II', units: ['いろいろな式', '図形と方程式', '指数関数・対数関数', '三角関数', '微分・積分'] },
+      { id: 'math_b', label: '数学B', units: ['数列', '統計的な推測', '数学と社会生活'] },
+      { id: 'math_iii', label: '数学III', units: ['極限', '微分法', '積分法'] },
+      { id: 'math_c', label: '数学C', units: ['ベクトル', '平面上の曲線と複素数平面', '数学的な表現の工夫'] },
+    ],
+  },
+  {
+    id: 'rika',
+    label: '理科',
+    emoji: '🔬',
+    description: '科学と人間生活・基礎科目・発展科目',
+    courses: [
+      { id: 'science_life', label: '科学と人間生活', units: ['光や熱の科学', '物質の科学', '生命の科学', '宇宙や地球の科学', '課題研究'] },
+      { id: 'physics_basic', label: '物理基礎', units: ['運動とエネルギー', '熱', '波', '電気', '物理学と社会'] },
+      { id: 'physics', label: '物理', units: ['力学', '熱力学', '波動', '電磁気', '原子'] },
+      { id: 'chemistry_basic', label: '化学基礎', units: ['物質の構成', '物質量と化学反応式', '酸と塩基', '酸化還元'] },
+      { id: 'chemistry', label: '化学', units: ['物質の状態', '化学反応とエネルギー', '化学平衡', '無機物質', '有機化合物', '高分子化合物'] },
+      { id: 'biology_basic', label: '生物基礎', units: ['生物の特徴', '遺伝子とその働き', '体内環境の維持', '生物の多様性と生態系'] },
+      { id: 'biology', label: '生物', units: ['生命現象と物質', '遺伝情報の発現と発生', '生殖と遺伝', '進化と系統', '生態と環境', '生命科学と社会'] },
+      { id: 'earth_basic', label: '地学基礎', units: ['地球のすがた', '変動する地球', '大気と海洋', '宇宙の構成', '自然災害と環境'] },
+      { id: 'earth_science', label: '地学', units: ['地球の概観', '地球の活動', '地球の歴史', '大気と海洋', '宇宙'] },
+    ],
+  },
+  {
+    id: 'gaikokugo',
+    label: '外国語',
+    emoji: '🔤',
+    description: '英語コミュニケーション・論理表現',
+    courses: [
+      { id: 'english_comm_i', label: '英語コミュニケーションI', units: ['聞くこと', '読むこと', '話すこと', '書くこと', '語彙・文法'] },
+      { id: 'english_comm_ii', label: '英語コミュニケーションII', units: ['説明文読解', '物語文読解', '意見交換', '発表', '要約'] },
+      { id: 'english_comm_iii', label: '英語コミュニケーションIII', units: ['高度な読解', '統合的な言語活動', '発表・討論', '英作文'] },
+      { id: 'logic_expression_i', label: '論理・表現I', units: ['話すこと', '書くこと', '文法・語法', '論理構成'] },
+      { id: 'logic_expression_ii', label: '論理・表現II', units: ['ディスカッション', 'プレゼンテーション', 'エッセイ', '表現の工夫'] },
+      { id: 'logic_expression_iii', label: '論理・表現III', units: ['発信力', '議論', '小論文型英作文', '資料を用いた表現'] },
+    ],
+  },
+  {
+    id: 'joho',
+    label: '情報',
+    emoji: '💻',
+    description: '情報I・情報II',
+    courses: [
+      { id: 'informatics_i', label: '情報I', units: ['情報社会の問題解決', 'コミュニケーションと情報デザイン', 'コンピュータとプログラミング', '情報通信ネットワークとデータ活用'] },
+      { id: 'informatics_ii', label: '情報II', units: ['情報社会の進展', 'コミュニケーションとコンテンツ', '情報とデータサイエンス', '情報システムとプログラミング'] },
+    ],
+  },
+  {
+    id: 'hoken_taiiku',
+    label: '保健体育',
+    emoji: '🏃',
+    description: '体育・保健',
+    courses: [
+      { id: 'physical_education', label: '体育', units: ['体つくり運動', '器械運動', '陸上競技', '球技', '武道', 'ダンス', '体育理論'] },
+      { id: 'health', label: '保健', units: ['現代社会と健康', '安全な社会生活', '生涯を通じる健康', '健康を支える環境づくり'] },
+    ],
+  },
+  {
+    id: 'katei',
+    label: '家庭',
+    emoji: '🏠',
+    description: '家庭基礎・家庭総合',
+    courses: [
+      { id: 'home_basic', label: '家庭基礎', units: ['人の一生と家族', '衣食住', '消費生活', '持続可能な生活'] },
+      { id: 'home_general', label: '家庭総合', units: ['青年期と家族', '子供と高齢者', '食生活', '衣生活', '住生活', '経済生活'] },
+    ],
+  },
 ]
 
 // ─────────────────────────────────────────────
@@ -131,6 +266,9 @@ export interface GenerationConfig {
   count: number
   passageCount: number
   questionsPerPassage: number
+  subjectArea: string
+  subjectCourse: string
+  subjectUnit: string
   subject: string
   additionalInstructions: string
   curriculumStage: CurriculumStage

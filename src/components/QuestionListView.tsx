@@ -16,7 +16,6 @@ export default function QuestionListView() {
   const passageSets     = useAppStore((s) => s.passageSets)
   const clearPassageSets = useAppStore((s) => s.clearPassageSets)
   const togglePassageSet = useAppStore((s) => s.togglePassageSet)
-  const setActiveView   = useAppStore((s) => s.setActiveView)
   const tab             = useAppStore((s) => s.questionListTab)
   const setTab          = useAppStore((s) => s.setQuestionListTab)
   const settings        = useAppStore((s) => s.settings)
@@ -43,6 +42,8 @@ export default function QuestionListView() {
 
   const checkedPassages = passageSets.filter((p) => p.checked)
   const allPassagesChecked = passageSets.length > 0 && passageSets.every((p) => p.checked)
+  const figureCount = passageSets.filter((p) => p.questionMode === 'figure').length
+  const passageCount = passageSets.length - figureCount
 
   const handleSelectAll = () => {
     filtered.forEach((q) => {
@@ -169,18 +170,8 @@ export default function QuestionListView() {
           まだ問題がありません
         </p>
         <p style={{ fontSize: 13, marginTop: 6, color: 'var(--color-text-dim)' }}>
-          問題生成画面で問題を生成してください。
+          左側のデータソースと生成設定から問題を生成してください。
         </p>
-        <button
-          onClick={() => setActiveView('generator')}
-          style={{
-            marginTop: 24, padding: '10px 24px', borderRadius: 10, border: 'none',
-            background: 'linear-gradient(135deg, #6366f1 0%, #7c3aed 100%)',
-            color: '#fff', fontSize: 14, fontWeight: 700, cursor: 'pointer',
-          }}
-        >
-          ⚡ 問題を生成する
-        </button>
       </div>
     )
   }
@@ -211,7 +202,7 @@ export default function QuestionListView() {
             marginBottom: -2,
           }}
         >
-          📖 長文問題 ({passageSets.length})
+          📚 セット問題 ({passageSets.length})
         </button>
       </div>
 
@@ -289,9 +280,11 @@ export default function QuestionListView() {
           <>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
             <div style={{ flex: '0 0 auto' }}>
-              <span style={{ fontSize: 16, fontWeight: 700 }}>長文問題一覧</span>
+              <span style={{ fontSize: 16, fontWeight: 700 }}>セット問題一覧</span>
               <span style={{ fontSize: 12, color: 'var(--color-text-muted)', marginLeft: 10 }}>
                 全{passageSets.length}セット
+                {passageCount > 0 && ` · 長文${passageCount}`}
+                {figureCount > 0 && ` · 図解${figureCount}`}
                 {checkedPassages.length > 0 && ` · ${checkedPassages.length}件選択中`}
               </span>
             </div>
@@ -302,7 +295,7 @@ export default function QuestionListView() {
             <span style={{ fontSize: 12, color: 'var(--color-text-dim)' }}>エクスポート:</span>
             <button onClick={handleExportPassagesDocx} style={btnStyle}>📘 Word</button>
             <button
-              onClick={() => showConfirm('全ての長文問題を削除しますか？', clearPassageSets)}
+              onClick={() => showConfirm('全てのセット問題を削除しますか？', clearPassageSets)}
               style={{ ...btnStyle, color: 'var(--color-error)', borderColor: 'rgba(239,68,68,0.3)' }}
             >
               🗑 クリア
@@ -335,7 +328,7 @@ export default function QuestionListView() {
         ) : (
           passageSets.length === 0 ? (
             <div style={{ textAlign: 'center', paddingTop: 60, color: 'var(--color-text-dim)', fontSize: 14 }}>
-              長文問題がまだありません。生成画面で「長文問題モード」を選択してください。
+              セット問題がまだありません。左側の生成設定で「長文」または「図解」を選択してください。
             </div>
           ) : (
             passageSets.map((ps, i) => (

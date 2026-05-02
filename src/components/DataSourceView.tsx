@@ -166,6 +166,7 @@ export default function DataSourceView() {
 
   // アプリ内ブラウザから「取り込む」ボタンが押されたとき content-captured イベントを受信
   useEffect(() => {
+    if (!(window as any).__TAURI_INTERNALS__) return
     let cancelled = false
     let unlisten: (() => void) | undefined
     listen<{ title: string; content: string }>('content-captured', ({ payload }) => {

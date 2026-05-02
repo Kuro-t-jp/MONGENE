@@ -1,5 +1,5 @@
 import type { ExamLevel, QuestionType, GenerationConfig } from '../types'
-import { CURRICULUM_STAGE_CONFIGS } from '../types'
+import { CURRICULUM_STAGE_CONFIGS, CURRICULUM_SUBJECT_CONFIGS } from '../types'
 
 export const LEVEL_DESCRIPTIONS: Record<ExamLevel, string> = {
   middle_exam:   '中学校定期考査レベル（基礎的な用語・概念の確認、教科書の範囲内）',
@@ -49,6 +49,19 @@ function buildTypePart(config: GenerationConfig): string {
     .join('\n  ・')
 }
 
+function buildSubjectPart(config: GenerationConfig): string {
+  const subjectConf = CURRICULUM_SUBJECT_CONFIGS.find((s) => s.id === config.subjectArea)
+  const courseConf = subjectConf?.courses.find((c) => c.id === config.subjectCourse)
+  const parts: string[] = []
+  if (subjectConf) parts.push(`教科: ${subjectConf.label}`)
+  if (courseConf) parts.push(`科目: ${courseConf.label}`)
+  if (config.subjectUnit) parts.push(`単元: ${config.subjectUnit}`)
+  if (config.subject) parts.push(`詳細テーマ: ${config.subject}`)
+  if (!parts.length) return ''
+  return `\n・出題範囲: ${parts.join(' / ')}
+・範囲遵守: 上記の教科・単元から外れる知識を主題にしないこと`
+}
+
 // ─── 一問一答プロンプト ────────────────────────────────────────────────────
 export function buildGenerationPrompt(
   sourceTexts: string[],
@@ -56,6 +69,7 @@ export function buildGenerationPrompt(
 ): string {
   const levelPart      = buildLevelPart(config)
   const typePart       = buildTypePart(config)
+  const subjectPart    = buildSubjectPart(config)
   const curriculumPart = buildCurriculumPart(config)
   const combined       = sourceTexts.join('\n\n---\n\n').slice(0, 80000)
   const hasSource      = combined.trim().length > 0
@@ -73,7 +87,7 @@ ${combined}`
 ・対象レベル:
   ・${levelPart}
 ・問題形式（以下の中から指定のものを使用）:
-  ・${typePart}${config.subject ? `\n・科目・テーマ: ${config.subject}` : ''}${curriculumPart ? `\n${curriculumPart}` : ''}${config.additionalInstructions ? `\n・追加指示: ${config.additionalInstructions}` : ''}
+  ・${typePart}${subjectPart}${curriculumPart ? `\n${curriculumPart}` : ''}${config.additionalInstructions ? `\n・追加指示: ${config.additionalInstructions}` : ''}
 
 ═══ 出力フォーマット ═══
 JSONのみを出力してください。前後に説明文や\`\`\`は不要です。
@@ -115,6 +129,7 @@ export function buildFigurePrompt(
 ): string {
   const levelPart      = buildLevelPart(config)
   const typePart       = buildTypePart(config)
+  const subjectPart    = buildSubjectPart(config)
   const curriculumPart = buildCurriculumPart(config)
   const combined       = sourceTexts.join('\n\n---\n\n').slice(0, 80000)
   const hasSource      = combined.trim().length > 0
@@ -140,7 +155,7 @@ ${combined}`
 ・対象レベル:
   ・${levelPart}
 ・設問形式（各設問に使用。複数形式をバランスよく配分）:
-  ・${typePart}${config.subject ? `\n・科目・テーマ: ${config.subject}` : ''}${curriculumPart ? `\n${curriculumPart}` : ''}${config.additionalInstructions ? `\n・追加指示: ${config.additionalInstructions}` : ''}
+  ・${typePart}${subjectPart}${curriculumPart ? `\n${curriculumPart}` : ''}${config.additionalInstructions ? `\n・追加指示: ${config.additionalInstructions}` : ''}
 
 ═══ 出力フォーマット ═══
 JSONのみを出力してください。前後に説明文や\`\`\`は不要です。
@@ -190,6 +205,7 @@ export function buildPassagePrompt(
 ): string {
   const levelPart      = buildLevelPart(config)
   const typePart       = buildTypePart(config)
+  const subjectPart    = buildSubjectPart(config)
   const curriculumPart = buildCurriculumPart(config)
   const combined       = sourceTexts.join('\n\n---\n\n').slice(0, 80000)
   const hasSource      = combined.trim().length > 0
@@ -210,7 +226,7 @@ ${combined}`
 ・対象レベル:
   ・${levelPart}
 ・設問形式（各設問に使用。複数形式をバランスよく配分）:
-  ・${typePart}${config.subject ? `\n・科目・テーマ: ${config.subject}` : ''}${curriculumPart ? `\n${curriculumPart}` : ''}${config.additionalInstructions ? `\n・追加指示: ${config.additionalInstructions}` : ''}
+  ・${typePart}${subjectPart}${curriculumPart ? `\n${curriculumPart}` : ''}${config.additionalInstructions ? `\n・追加指示: ${config.additionalInstructions}` : ''}
 
 ═══ 出力フォーマット ═══
 JSONのみを出力してください。前後に説明文や\`\`\`は不要です。

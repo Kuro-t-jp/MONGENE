@@ -6,7 +6,12 @@
       "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:1420/)",
       "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:3001/api/sources)",
       "Bash(curl -v -H \"Origin: tauri://localhost\" http://localhost:3001/api/sources)",
-      "Bash(curl -v -H \"Origin: https://tauri.localhost\" http://localhost:3001/api/sources)"
+      "Bash(curl -v -H \"Origin: https://tauri.localhost\" http://localhost:3001/api/sources)",
+      "Bash(echo \"PID: $!\")",
+      "Bash(kill 14250)"
+    ],
+    "additionalDirectories": [
+      "/tmp"
     ]
   }
 }

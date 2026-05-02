@@ -62,6 +62,9 @@ const defaultConfig: GenerationConfig = {
   count: 10,
   passageCount: 2,
   questionsPerPassage: 5,
+  subjectArea: '',
+  subjectCourse: '',
+  subjectUnit: '',
   subject: '',
   additionalInstructions: '',
   curriculumStage: 'none',
@@ -163,6 +166,9 @@ export const useAppStore = create<AppState>()(
           generationConfig: {
             passageCount: 2,
             questionsPerPassage: 5,
+            subjectArea: '',
+            subjectCourse: '',
+            subjectUnit: '',
             ...prevConfig,
             generationMode: validModes.includes(prevConfig.generationMode)
               ? prevConfig.generationMode

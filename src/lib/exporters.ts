@@ -239,9 +239,11 @@ export async function exportToDocx(questions: Question[]): Promise<Blob> {
 
 export async function exportPassagesToDocx(passageSets: PassageSet[]): Promise<Blob> {
   const date = new Date().toLocaleString('ja-JP')
+  const hasFigure = passageSets.some((ps) => ps.questionMode === 'figure')
+  const title = hasFigure ? 'セット問題集' : '長文問題集'
 
   const children: Paragraph[] = [
-    new Paragraph({ children: [new TextRun({ text: '長文問題集', bold: true, size: 32 })], spacing: { after: 80 } }),
+    new Paragraph({ children: [new TextRun({ text: title, bold: true, size: 32 })], spacing: { after: 80 } }),
     new Paragraph({ children: [new TextRun({ text: `生成日時: ${date}　セット数: ${passageSets.length}セット`, size: 20 })], spacing: { after: 400 } }),
   ]
 
@@ -259,7 +261,7 @@ export async function exportPassagesToDocx(passageSets: PassageSet[]): Promise<B
     }
 
     children.push(new Paragraph({
-      children: [new TextRun({ text: '【本文】', bold: true, size: 22 })],
+      children: [new TextRun({ text: ps.questionMode === 'figure' ? '【図の説明】' : '【本文】', bold: true, size: 22 })],
       spacing: { after: 80 },
     }))
 
