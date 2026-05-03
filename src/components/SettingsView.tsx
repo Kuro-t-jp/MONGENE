@@ -147,6 +147,22 @@ export default function SettingsView() {
           />
         </div>
 
+        {/* GDDATA 連携 */}
+        <div style={card}>
+          <label style={label}>📚 GDDATA URL</label>
+          <p style={{ margin: '0 0 10px', fontSize: 12, color: 'var(--color-text-dim)', lineHeight: 1.6 }}>
+            GDDATA (Google Drive RAG) の REST API ベース URL を入力してください。<br />
+            デフォルト: <code style={{ fontFamily: 'monospace' }}>http://localhost:8000</code>
+          </p>
+          <input
+            type="text"
+            placeholder="http://localhost:8000"
+            value={settings.gddataBaseUrl ?? 'http://localhost:8000'}
+            onChange={(e) => updateSettings({ gddataBaseUrl: e.target.value })}
+            style={input}
+          />
+        </div>
+
         {/* Google 連携 */}
         <div style={card}>
           <label style={label}>🔗 Google Client ID</label>

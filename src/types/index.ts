@@ -460,6 +460,7 @@ export interface AppSettings {
   googleClientId: string
   googleClientSecret: string
   seibuturagBaseUrl: string
+  gddataBaseUrl: string
 }
 
 export interface GoogleAuthState {

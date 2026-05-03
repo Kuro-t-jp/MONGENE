@@ -10,6 +10,8 @@ import type { DataSourceType, ExamLevel, QuestionType, CurriculumStage, Generati
 import { TEMPLATES } from '../lib/templates'
 import { listSources, fetchSourceAsText, getSourceImages, imageUrlToBase64 } from '../lib/seibuturagClient'
 import type { SeibuturagSource } from '../lib/seibuturagClient'
+import { listGddataTopics, searchGddataChunks, fetchGddataTopicContent } from '../lib/gddataClient'
+import type { GddataTopic } from '../lib/gddataClient'
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -196,6 +198,16 @@ export default function Sidebar() {
   const [ragQuery,        setRagQuery]        = useState('')
   const [ragConnected,    setRagConnected]    = useState(false)
 
+  // ── GDDATA ────────────────────────────────────────────────────────────────
+  const [showGddata,         setShowGddata]         = useState(false)
+  const [gddataTopics,       setGddataTopics]       = useState<GddataTopic[]>([])
+  const [gddataLoading,      setGddataLoading]      = useState(false)
+  const [gddataImporting,    setGddataImporting]    = useState(false)
+  const [gddataMsg,          setGddataMsg]          = useState<string | null>(null)
+  const [gddataChecked,      setGddataChecked]      = useState<Set<string>>(new Set())
+  const [gddataQuery,        setGddataQuery]        = useState('')
+  const [gddataConnected,    setGddataConnected]    = useState(false)
+
   // ── Templates ─────────────────────────────────────────────────────────────
   const [appliedTemplate, setAppliedTemplate] = useState<string | null>(null)
 
@@ -372,9 +384,135 @@ export default function Sidebar() {
     }
   }
 
+  // ── GDDATA handlers ───────────────────────────────────────────────────────
+  const gddataBaseUrl = settings.gddataBaseUrl || 'http://localhost:8000'
+
+  const handleGddataConnect = async () => {
+    setGddataLoading(true)
+    setGddataMsg('🔌 接続中...')
+    try {
+      const topics = await listGddataTopics(gddataBaseUrl)
+      setGddataTopics(topics)
+      setGddataConnected(true)
+      setGddataMsg(
+        topics.length === 0
+          ? '⚠️ トピックが見つかりません'
+          : `✅ ${topics.length}件のトピックを取得しました`,
+      )
+    } catch (err) {
+      setGddataMsg(`❌ 接続失敗: ${String(err)}`)
+      setGddataConnected(false)
+    } finally {
+      setGddataLoading(false)
+    }
+  }
+
+  const topicKey = (t: GddataTopic) => `${t.subject}::${t.unit}`
+
+  const toggleGddataTopic = (t: GddataTopic) => {
+    const key = topicKey(t)
+    setGddataChecked((prev) => {
+      const next = new Set(prev)
+      next.has(key) ? next.delete(key) : next.add(key)
+      return next
+    })
+  }
+
+  const handleGddataImport = async () => {
+    if (gddataChecked.size === 0) return
+    setGddataImporting(true)
+    let imported = 0
+    try {
+      const targets = gddataTopics.filter((t) => gddataChecked.has(topicKey(t)))
+      for (const topic of targets) {
+        const label = `${topic.subject} / ${topic.unit}`
+        setGddataMsg(`📥 ${label} を取得中...`)
+
+        const { text, figureChunks } = await fetchGddataTopicContent(
+          gddataBaseUrl, topic, gddataQuery,
+        )
+
+        if (text.trim()) {
+          addDataSource({
+            id: uuidv4(), type: 'text',
+            name: `[GDDATA] ${label}`,
+            content: text,
+            size: new Blob([text]).size,
+            addedAt: new Date().toISOString(),
+            selected: true,
+          })
+          imported++
+        }
+
+        for (const fig of figureChunks) {
+          const figText = `[図: ${label} p.${fig.page_number ?? '?'}]\n${fig.content}`
+          addDataSource({
+            id: uuidv4(), type: 'text',
+            name: `[GDDATA図] ${label} p.${fig.page_number ?? '?'}`,
+            content: figText,
+            size: new Blob([figText]).size,
+            addedAt: new Date().toISOString(),
+            selected: true,
+          })
+          imported++
+        }
+      }
+      setGddataMsg(`✅ ${imported}件を読み込みました — データソース欄を確認してください`)
+      setGddataChecked(new Set())
+    } catch (err) {
+      setGddataMsg(`❌ ${String(err)}`)
+    } finally {
+      setGddataImporting(false)
+    }
+  }
+
+  // ── GDDATA: 検索クエリで直接インポート ────────────────────────────────────
+  const handleGddataSearch = async () => {
+    if (!gddataQuery.trim()) return
+    setGddataImporting(true)
+    setGddataMsg(`🔍 「${gddataQuery}」を検索中...`)
+    try {
+      const chunks = await searchGddataChunks(gddataBaseUrl, gddataQuery, { limit: 15 })
+      const textParts: string[] = []
+      let figCount = 0
+      for (const c of chunks) {
+        if (c.image_drive_url) {
+          const figText = `[図: ${c.subject} ${c.unit} p.${c.page_number ?? '?'}]\n${c.content}`
+          addDataSource({
+            id: uuidv4(), type: 'text',
+            name: `[GDDATA図] ${c.subject}/${c.unit} p.${c.page_number ?? '?'}`,
+            content: figText,
+            size: new Blob([figText]).size,
+            addedAt: new Date().toISOString(),
+            selected: true,
+          })
+          figCount++
+        } else {
+          textParts.push(c.content)
+        }
+      }
+      if (textParts.length > 0) {
+        const text = textParts.join('\n\n')
+        addDataSource({
+          id: uuidv4(), type: 'text',
+          name: `[GDDATA] ${gddataQuery}`,
+          content: text,
+          size: new Blob([text]).size,
+          addedAt: new Date().toISOString(),
+          selected: true,
+        })
+      }
+      const total = (textParts.length > 0 ? 1 : 0) + figCount
+      setGddataMsg(`✅ ${total}件を読み込みました`)
+    } catch (err) {
+      setGddataMsg(`❌ ${String(err)}`)
+    } finally {
+      setGddataImporting(false)
+    }
+  }
+
   // ── Template handler ──────────────────────────────────────────────────────
-  const applyTemplate = (templateId: string) => {
-    const tpl = TEMPLATES.find((t) => t.id === templateId)
+  const applyTemplate = (templateId: string) => {    const tpl = TEMPLATES.find((t) => t.id === templateId)
     if (!tpl) return
     updateConfig(tpl.config)
     setAppliedTemplate(templateId)
@@ -614,6 +752,27 @@ export default function Sidebar() {
                 </span>
               )}
             </button>
+            <button
+              onClick={() => {
+                setShowGddata((v) => !v)
+                if (!showGddata && !gddataConnected) handleGddataConnect()
+              }}
+              style={{
+                ...btn,
+                background: showGddata ? 'rgba(16,185,129,0.12)' : 'var(--color-surface-3)',
+                color: showGddata ? '#34d399' : 'var(--color-text-muted)',
+                border: `1px solid ${showGddata ? 'rgba(16,185,129,0.4)' : 'var(--color-border)'}`,
+                display: 'flex', alignItems: 'center', gap: 6,
+              }}
+            >
+              📚 GDDATAから読み込む
+              {gddataConnected && (
+                <span style={{ fontSize: 9, padding: '1px 5px', borderRadius: 8,
+                  background: 'rgba(16,185,129,0.2)', color: '#34d399', fontWeight: 700 }}>
+                  接続済
+                </span>
+              )}
+            </button>
             {dataSources.length > 0 && (
               <button
                 onClick={() => { if (window.confirm('全てのデータソースを削除しますか？')) clearDataSources() }}
@@ -715,6 +874,113 @@ export default function Sidebar() {
             </div>
           )}
 
+          {/* GDDATA panel */}
+          {showGddata && (
+            <div style={{ marginTop: 8, padding: 12, borderRadius: 10, background: 'rgba(16,185,129,0.06)', border: '1px solid rgba(16,185,129,0.25)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+                <span style={{ fontSize: 12, fontWeight: 700, color: '#34d399' }}>📚 GDDATA</span>
+                <span style={{ fontSize: 10, color: 'var(--color-text-dim)', flex: 1 }}>{gddataBaseUrl}</span>
+                <button
+                  onClick={handleGddataConnect}
+                  disabled={gddataLoading}
+                  style={{ padding: '2px 8px', borderRadius: 5, border: '1px solid rgba(16,185,129,0.3)', background: 'rgba(16,185,129,0.1)', color: '#34d399', fontSize: 10, cursor: 'pointer', opacity: gddataLoading ? 0.5 : 1 }}
+                >
+                  {gddataLoading ? '⏳' : '🔄'}
+                </button>
+              </div>
+
+              {gddataMsg && (
+                <div style={{
+                  fontSize: 11, padding: '5px 8px', borderRadius: 6, marginBottom: 8,
+                  background: gddataMsg.startsWith('❌') ? 'rgba(239,68,68,0.08)' : gddataMsg.startsWith('✅') ? 'rgba(16,185,129,0.08)' : 'rgba(16,185,129,0.06)',
+                  color: gddataMsg.startsWith('❌') ? '#f87171' : gddataMsg.startsWith('✅') ? '#34d399' : 'var(--color-text-muted)',
+                  lineHeight: 1.5,
+                }}>
+                  {gddataMsg}
+                </div>
+              )}
+
+              {/* クエリ直接検索 */}
+              <div style={{ display: 'flex', gap: 4, marginBottom: 8 }}>
+                <input
+                  type="text"
+                  placeholder="トピック検索（例: 光合成、細胞分裂）"
+                  value={gddataQuery}
+                  onChange={(e) => setGddataQuery(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleGddataSearch()}
+                  style={{ ...inp, flex: 1 }}
+                />
+                <button
+                  onClick={handleGddataSearch}
+                  disabled={!gddataQuery.trim() || gddataImporting}
+                  style={{
+                    padding: '6px 10px', borderRadius: 7, border: 'none', fontSize: 11, fontWeight: 700, cursor: gddataQuery.trim() ? 'pointer' : 'not-allowed',
+                    background: gddataQuery.trim() && !gddataImporting ? 'linear-gradient(135deg, #10b981 0%, #059669 100%)' : 'var(--color-surface-3)',
+                    color: gddataQuery.trim() && !gddataImporting ? '#fff' : 'var(--color-text-dim)',
+                  }}
+                >
+                  🔍
+                </button>
+              </div>
+
+              {gddataTopics.length > 0 && (
+                <>
+                  <div style={{ fontSize: 10, color: 'var(--color-text-dim)', marginBottom: 5 }}>
+                    トピック（チェックして読み込む）
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 3, maxHeight: 180, overflowY: 'auto', marginBottom: 8 }}>
+                    {gddataTopics.map((topic) => {
+                      const key = `${topic.subject}::${topic.unit}`
+                      const checked = gddataChecked.has(key)
+                      return (
+                        <div
+                          key={key}
+                          onClick={() => toggleGddataTopic(topic)}
+                          style={{
+                            display: 'flex', alignItems: 'center', gap: 6, padding: '5px 7px', borderRadius: 6, cursor: 'pointer',
+                            background: checked ? 'rgba(16,185,129,0.12)' : 'var(--color-surface-3)',
+                            border: `1px solid ${checked ? 'rgba(16,185,129,0.4)' : 'var(--color-border)'}`,
+                          }}
+                        >
+                          <div style={{
+                            width: 13, height: 13, borderRadius: 3, flexShrink: 0,
+                            border: `1.5px solid ${checked ? '#34d399' : 'var(--color-border-strong)'}`,
+                            background: checked ? '#34d399' : 'transparent',
+                            display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          }}>
+                            {checked && <span style={{ color: '#fff', fontSize: 8 }}>✓</span>}
+                          </div>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontSize: 11, fontWeight: 500, color: 'var(--color-text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              {topic.subject}
+                            </div>
+                            <div style={{ fontSize: 9, color: 'var(--color-text-dim)' }}>
+                              {topic.unit}
+                            </div>
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+
+                  <button
+                    onClick={handleGddataImport}
+                    disabled={gddataChecked.size === 0 || gddataImporting}
+                    style={{
+                      ...btn,
+                      background: gddataChecked.size > 0 && !gddataImporting ? 'linear-gradient(135deg, #10b981 0%, #059669 100%)' : 'var(--color-surface-3)',
+                      color: gddataChecked.size > 0 && !gddataImporting ? '#fff' : 'var(--color-text-dim)',
+                      border: 'none', textAlign: 'center', fontWeight: 700,
+                      cursor: gddataChecked.size > 0 ? 'pointer' : 'not-allowed',
+                    }}
+                  >
+                    {gddataImporting ? '⏳ 読み込み中...' : `📥 ${gddataChecked.size}件のトピックを読み込む`}
+                  </button>
+                </>
+              )}
+            </div>
+          )}
+
           {/* Paste panel */}
           {showPaste && (
             <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -800,33 +1066,53 @@ export default function Sidebar() {
             </div>
           </div>
 
-          {/* ── モード選択タブ ────────────────────────────────────────────── */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 4, marginBottom: 14 }}>
-            {([
-              { id: 'auto',     label: 'お任せ',   emoji: '✨', color: '#10b981', bg: 'rgba(16,185,129,0.12)', border: 'rgba(16,185,129,0.4)' },
-              { id: 'template', label: 'テンプレ', emoji: '📋', color: '#818cf8', bg: 'rgba(99,102,241,0.12)', border: 'rgba(99,102,241,0.4)' },
-              { id: 'manual',   label: '詳細設定', emoji: '⚙️', color: '#94a3b8', bg: 'rgba(148,163,184,0.12)', border: 'rgba(148,163,184,0.35)' },
-            ] as const).map((m) => {
-              const active = genUiMode === m.id
-              return (
-                <button
-                  key={m.id}
-                  onClick={() => setGenUiMode(m.id)}
-                  style={{
-                    padding: '10px 4px', border: `2px solid ${active ? m.border : 'var(--color-border)'}`,
-                    borderRadius: 10, cursor: 'pointer',
-                    background: active ? m.bg : 'transparent',
-                    transition: 'all 0.15s',
-                    display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3,
-                  }}
-                >
-                  <span style={{ fontSize: 18 }}>{m.emoji}</span>
-                  <span style={{ fontSize: 11, fontWeight: 700, color: active ? m.color : 'var(--color-text-dim)' }}>
-                    {m.label}
-                  </span>
-                </button>
-              )
-            })}
+          {/* ── 問題設計 ─────────────────────────────────────────────────── */}
+          <div style={{ marginBottom: 12 }}>
+            <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--color-text-dim)', letterSpacing: '0.1em', marginBottom: 7 }}>
+              📐 問題設計
+            </div>
+            {/* セグメントコントロール（画面切り替え） */}
+            <div style={{
+              display: 'flex',
+              background: 'var(--color-surface-2)',
+              borderRadius: 12,
+              padding: 3,
+              border: '1px solid var(--color-border)',
+            }}>
+              {([
+                { id: 'auto',     label: 'お任せ',   emoji: '✨', color: '#10b981' },
+                { id: 'template', label: 'テンプレート', emoji: '📋', color: '#818cf8' },
+                { id: 'manual',   label: '詳細設定', emoji: '⚙️', color: '#94a3b8' },
+              ] as const).map((m) => {
+                const active = genUiMode === m.id
+                return (
+                  <button
+                    key={m.id}
+                    onClick={() => setGenUiMode(m.id)}
+                    style={{
+                      flex: 1,
+                      padding: '9px 2px',
+                      borderRadius: 9,
+                      border: 'none',
+                      cursor: 'pointer',
+                      background: active ? 'var(--color-surface-1)' : 'transparent',
+                      color: active ? m.color : 'var(--color-text-dim)',
+                      fontSize: 10,
+                      fontWeight: 700,
+                      boxShadow: active ? '0 1px 4px rgba(0,0,0,0.18)' : 'none',
+                      transition: 'all 0.15s',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      alignItems: 'center',
+                      gap: 3,
+                    }}
+                  >
+                    <span style={{ fontSize: 17 }}>{m.emoji}</span>
+                    <span style={{ lineHeight: 1.2, textAlign: 'center' }}>{m.label}</span>
+                  </button>
+                )
+              })}
+            </div>
           </div>
 
           {/* ══════════════ ✨ お任せモード ══════════════ */}

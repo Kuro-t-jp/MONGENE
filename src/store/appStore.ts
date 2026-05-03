@@ -76,6 +76,7 @@ const defaultSettings: AppSettings = {
   googleClientId: '',
   googleClientSecret: '',
   seibuturagBaseUrl: 'http://localhost:3001',
+  gddataBaseUrl: 'http://localhost:8000',
 }
 
 export const useAppStore = create<AppState>()(
